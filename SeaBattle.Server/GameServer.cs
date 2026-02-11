@@ -94,14 +94,23 @@ namespace SeaBattle.Server
             }
             finally
             {
-                foreach (var player in _players.Values)
+                // НЕ УДАЛЯЕМ ИГРОКА СРАЗУ, сначала проверяем
+                var playerToRemove = _players.Values.FirstOrDefault(p => p.ConnectionId == connectionId);
+                if (playerToRemove != null)
                 {
-                    if (player.ConnectionId == connectionId)
+                    // Проверяем, не в игре ли игрок
+                    var room = _lobbyManager.GetPlayerRoom(playerToRemove.Id);
+                    if (room == null)
                     {
-                        _lobbyManager.LeaveRoom(player.Id);
-                        _players.TryRemove(player.Id, out _);
-                        Console.WriteLine($"Игрок удален: {player.Name}");
-                        break;
+                        // Только если не в комнате - удаляем
+                        _players.TryRemove(playerToRemove.Id, out _);
+                        Console.WriteLine($"Игрок удален: {playerToRemove.Name}");
+                    }
+                    else
+                    {
+                        // Если в комнате - помечаем как отключившегося, но не удаляем
+                        playerToRemove.Status = PlayerStatus.Offline;
+                        Console.WriteLine($"Игрок {playerToRemove.Name} отключился, но остался в комнате {room.Name}");
                     }
                 }
 
@@ -144,7 +153,8 @@ namespace SeaBattle.Server
                         };
 
                     case MessageType.Disconnect:
-                        return null;
+                        Console.WriteLine($"Клиент {connectionId} инициировал отключение");
+                        return null; // Просто завершаем соединение
 
                     default:
                         return new NetworkMessage

@@ -12,20 +12,18 @@ namespace SeaBattle.Client
 {
     public partial class MainWindow : Window
     {
-        private TcpClient _tcpClient;
-        private NetworkStream _stream;
-        private bool _isConnected;
+        public TcpClient TcpClient { get; private set; }
+        public NetworkStream Stream { get; private set; }
+        public string PlayerId { get; private set; }
+        public string PlayerName { get; private set; }
+        public bool IsConnected { get; private set; }
+
         private CancellationTokenSource _cancellationTokenSource;
-        private string _playerId;
-        private string _playerName;
 
         public MainWindow()
         {
             InitializeComponent();
-            _isConnected = false;
-            _playerId = null;
-            _playerName = "Гость";
-            UpdateUI();
+            IsConnected = false;
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -34,26 +32,27 @@ namespace SeaBattle.Client
             {
                 string serverAddress = ServerAddressTextBox.Text;
                 int port = int.Parse(PortTextBox.Text);
-                _playerName = PlayerNameTextBox.Text.Trim();
+                PlayerName = PlayerNameTextBox.Text.Trim();
 
-                if (string.IsNullOrEmpty(_playerName))
+                if (string.IsNullOrEmpty(PlayerName))
                 {
-                    AddMessage("Введите имя игрока");
+                    MessageBox.Show("Введите имя игрока", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
-                AddMessage($"Подключение к {serverAddress}:{port} как {_playerName}...");
+                ConnectButton.IsEnabled = false;
+                ConnectButton.Content = "Подключение...";
 
-                _tcpClient = new TcpClient();
-                await _tcpClient.ConnectAsync(serverAddress, port);
+                TcpClient = new TcpClient();
+                await TcpClient.ConnectAsync(serverAddress, port);
 
-                _stream = _tcpClient.GetStream();
-                _isConnected = true;
+                Stream = TcpClient.GetStream();
+                IsConnected = true;
                 _cancellationTokenSource = new CancellationTokenSource();
 
                 UpdateUI();
 
-                // Запускаем прослушивание сообщений
+                // Запускаем прослушивание
                 _ = Task.Run(() => ListenToServer(_cancellationTokenSource.Token));
 
                 // Отправляем запрос на подключение
@@ -61,11 +60,15 @@ namespace SeaBattle.Client
             }
             catch (FormatException)
             {
-                AddMessage("Ошибка: неверный формат порта");
+                MessageBox.Show("Неверный формат порта", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                ConnectButton.IsEnabled = true;
+                ConnectButton.Content = "Подключиться";
             }
             catch (Exception ex)
             {
-                AddMessage($"Ошибка подключения: {ex.Message}");
+                MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                ConnectButton.IsEnabled = true;
+                ConnectButton.Content = "Подключиться";
             }
         }
 
@@ -76,103 +79,25 @@ namespace SeaBattle.Client
                 Type = MessageType.Connect,
                 Data = JObject.FromObject(new ConnectData
                 {
-                    PlayerName = _playerName
+                    PlayerName = PlayerName
                 })
             };
 
             await SendMessageAsync(connectMessage);
         }
 
-        private async void SendButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_isConnected)
-            {
-                AddMessage("Сначала подключитесь к серверу");
-                return;
-            }
-
-            string messageText = MessageTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(messageText))
-            {
-                AddMessage("Введите сообщение");
-                return;
-            }
-
-            try
-            {
-                var chatMessage = new NetworkMessage
-                {
-                    Type = MessageType.ChatMessage,
-                    SenderId = _playerId,
-                    Data = JObject.FromObject(new ChatMessageData
-                    {
-                        Message = messageText,
-                        SenderName = _playerName
-                    })
-                };
-
-                await SendMessageAsync(chatMessage);
-                AddMessage($"Вы: {messageText}");
-                MessageTextBox.Text = "";
-            }
-            catch (Exception ex)
-            {
-                AddMessage($"Ошибка отправки: {ex.Message}");
-            }
-        }
-
-        private void DisconnectButton_Click(object sender, RoutedEventArgs e)
-        {
-            Disconnect();
-        }
-
-        private async void Disconnect()
-        {
-            try
-            {
-                if (_isConnected && _stream != null)
-                {
-                    var disconnectMessage = new NetworkMessage
-                    {
-                        Type = MessageType.Disconnect
-                    };
-
-                    await SendMessageAsync(disconnectMessage);
-                }
-            }
-            catch { }
-            finally
-            {
-                _isConnected = false;
-                _cancellationTokenSource?.Cancel();
-
-                _stream?.Close();
-                _tcpClient?.Close();
-
-                _stream = null;
-                _tcpClient = null;
-                _playerId = null;
-
-                AddMessage("Отключено от сервера");
-                UpdateUI();
-
-                // Возвращаемся на главную страницу
-                ReturnToMainPage();
-            }
-        }
-
         private async Task SendMessageAsync(NetworkMessage message)
         {
-            if (!_isConnected || _stream == null)
+            if (!IsConnected || Stream == null)
                 throw new InvalidOperationException("Не подключено к серверу");
 
             string json = message.ToJson();
             byte[] data = Encoding.UTF8.GetBytes(json);
             byte[] length = BitConverter.GetBytes(data.Length);
 
-            await _stream.WriteAsync(length, 0, 4);
-            await _stream.WriteAsync(data, 0, data.Length);
-            await _stream.FlushAsync();
+            await Stream.WriteAsync(length, 0, 4);
+            await Stream.WriteAsync(data, 0, data.Length);
+            await Stream.FlushAsync();
         }
 
         private async Task ListenToServer(CancellationToken cancellationToken)
@@ -181,12 +106,12 @@ namespace SeaBattle.Client
             {
                 byte[] buffer = new byte[4096];
 
-                while (_isConnected && _tcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
+                while (IsConnected && TcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
                 {
                     try
                     {
                         byte[] lengthBytes = new byte[4];
-                        int lengthBytesRead = await _stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
+                        int lengthBytesRead = await Stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
                         if (lengthBytesRead < 4) break;
 
                         int messageLength = BitConverter.ToInt32(lengthBytes, 0);
@@ -195,7 +120,7 @@ namespace SeaBattle.Client
 
                         while (totalBytesRead < messageLength)
                         {
-                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead,
+                            int bytesRead = await Stream.ReadAsync(messageBytes, totalBytesRead,
                                 messageLength - totalBytesRead, cancellationToken);
                             if (bytesRead == 0) break;
                             totalBytesRead += bytesRead;
@@ -222,8 +147,7 @@ namespace SeaBattle.Client
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
-                        AddMessage($"Ошибка соединения: {ex.Message}");
-                        Disconnect();
+                        MessageBox.Show($"Ошибка соединения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
             }
@@ -239,22 +163,16 @@ namespace SeaBattle.Client
                         HandleConnectResponse(message);
                         break;
 
-                    case MessageType.ChatMessage:
-                        HandleChatMessage(message);
-                        break;
-
                     case MessageType.Error:
-                        AddMessage($"Ошибка от сервера: {message.Data?["Message"]}");
-                        break;
-
-                    case MessageType.Pong:
-                        // Игнорируем
+                        MessageBox.Show($"Ошибка от сервера: {message.Data?["Message"]}", "Ошибка",
+                                      MessageBoxButton.OK, MessageBoxImage.Error);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                AddMessage($"Ошибка обработки сообщения: {ex.Message}");
+                MessageBox.Show($"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -264,108 +182,67 @@ namespace SeaBattle.Client
 
             if (data.Success)
             {
-                _playerId = data.PlayerId;
-                AddMessage($"Успешное подключение! Ваш ID: {_playerId}");
+                PlayerId = data.PlayerId;
+                PlayerName = PlayerNameTextBox.Text;
 
-                // !!! ВАЖНО: Переходим в лобби !!!
-                NavigateToLobby();
+                StatusText.Text = $"Подключено как {PlayerName}";
+                ConnectionStatus.Text = "Подключено";
+                ConnectionStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
+                PlayerNameText.Text = PlayerName;
+
+                // Переходим в лобби
+                var lobbyPage = new LobbyPage(this);
+                this.Content = lobbyPage;
             }
             else
             {
-                AddMessage($"Ошибка подключения: {data.Message}");
-                Disconnect();
+                MessageBox.Show($"Ошибка подключения: {data.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
+                ConnectButton.IsEnabled = true;
+                ConnectButton.Content = "Подключиться";
             }
-        }
-
-        private void HandleChatMessage(NetworkMessage message)
-        {
-            var msg = message.Data?["Message"]?.ToString();
-            var sender = message.Data?["OriginalSender"]?.ToString();
-
-            if (!string.IsNullOrEmpty(msg))
-            {
-                if (!string.IsNullOrEmpty(sender))
-                {
-                    AddMessage($"{sender}: {msg}");
-                }
-                else
-                {
-                    AddMessage($"Сервер: {msg}");
-                }
-            }
-        }
-
-        // !!! ВАЖНО: Метод для перехода в лобби !!!
-        public void NavigateToLobby()
-        {
-            // Создаем страницу лобби
-            var lobbyPage = new LobbyPage(_tcpClient, _stream, _playerId, _playerName);
-
-            // Получаем родительское окно и меняем содержимое
-            var mainWindow = Application.Current.MainWindow as MainWindow;
-            if (mainWindow != null)
-            {
-                // Меняем содержимое окна на страницу лобби
-                mainWindow.Content = lobbyPage;
-            }
-        }
-
-        public void ReturnToMainPage()
-        {
-            // Возвращаемся к главному окну
-            var mainWindow = new MainWindow();
-            Application.Current.MainWindow = mainWindow;
-            mainWindow.Show();
-
-            // Закрываем текущее окно
-            Close();
-        }
-
-        private void AddMessage(string message)
-        {
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            MessageTextBlock.Text += $"[{timestamp}] {message}\n";
-
-            var scrollViewer = GetChildOfType<System.Windows.Controls.ScrollViewer>(MessageTextBlock.Parent as DependencyObject);
-            scrollViewer?.ScrollToEnd();
-        }
-
-        private T GetChildOfType<T>(DependencyObject depObj) where T : DependencyObject
-        {
-            if (depObj == null) return null;
-
-            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj); i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
-                var result = (child as T) ?? GetChildOfType<T>(child);
-                if (result != null) return result;
-            }
-
-            return null;
         }
 
         private void UpdateUI()
         {
-            ConnectButton.IsEnabled = !_isConnected;
-            SendButton.IsEnabled = _isConnected;
-            DisconnectButton.IsEnabled = _isConnected;
-            ServerAddressTextBox.IsEnabled = !_isConnected;
-            PortTextBox.IsEnabled = !_isConnected;
-            PlayerNameTextBox.IsEnabled = !_isConnected;
-            MessageTextBox.IsEnabled = _isConnected;
+            ConnectButton.IsEnabled = !IsConnected;
+            PlayerNameTextBox.IsEnabled = !IsConnected;
+            ServerAddressTextBox.IsEnabled = !IsConnected;
+            PortTextBox.IsEnabled = !IsConnected;
 
-            StatusText.Text = _isConnected ? $"Подключено как {_playerName}" : "Не подключено";
-            StatusText.Foreground = _isConnected ?
+            StatusText.Text = IsConnected ? $"Подключено как {PlayerName}" : "Не подключено";
+            ConnectionStatus.Text = IsConnected ? "Подключено" : "Отключено";
+            ConnectionStatus.Foreground = IsConnected ?
                 System.Windows.Media.Brushes.LightGreen :
                 System.Windows.Media.Brushes.LightCoral;
         }
 
-        private void MessageTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        private void ExitButton_Click(object sender, RoutedEventArgs e)
         {
-            if (e.Key == System.Windows.Input.Key.Enter && SendButton.IsEnabled)
+            Disconnect();
+            Application.Current.Shutdown();
+        }
+
+        public void Disconnect()
+        {
+            try
             {
-                SendButton_Click(sender, e);
+                IsConnected = false;
+                _cancellationTokenSource?.Cancel();
+
+                if (Stream != null)
+                {
+                    Stream.Close();
+                    Stream = null;
+                }
+
+                if (TcpClient != null)
+                {
+                    TcpClient.Close();
+                    TcpClient = null;
+                }
             }
+            catch { }
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)

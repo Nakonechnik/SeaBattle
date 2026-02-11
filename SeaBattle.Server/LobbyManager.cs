@@ -68,6 +68,7 @@ namespace SeaBattle.Server
             {
                 if (room.ContainsPlayer(playerId))
                 {
+                    bool wasCreator = (room.Creator?.Id == playerId);
                     room.RemovePlayer(playerId);
 
                     if (_players.TryGetValue(playerId, out var player))
@@ -77,10 +78,19 @@ namespace SeaBattle.Server
 
                     Console.WriteLine($"Игрок {playerId} покинул комнату {room.Name}");
 
+                    // Если комната пустая - удаляем
                     if (room.IsEmpty)
                     {
                         _rooms.TryRemove(room.Id, out _);
-                        Console.WriteLine($"Комната {room.Name} удалена");
+                        Console.WriteLine($"Комната {room.Name} удалена (пустая)");
+                    }
+                    // Если создатель покинул комнату, но есть второй игрок - передаем права
+                    else if (wasCreator && room.Player2 != null)
+                    {
+                        room.Creator = room.Player2;
+                        room.Player2 = null;
+                        room.Status = GameRoomStatus.Waiting;
+                        Console.WriteLine($"Права создателя переданы игроку {room.Creator.Name}");
                     }
 
                     break;

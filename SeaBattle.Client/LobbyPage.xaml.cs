@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Text;
@@ -8,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using Newtonsoft.Json.Linq;
 using SeaBattle.Shared.Models;
 
@@ -16,6 +14,7 @@ namespace SeaBattle.Client
 {
     public partial class LobbyPage : Page
     {
+        private MainWindow _mainWindow;
         private TcpClient _tcpClient;
         private NetworkStream _stream;
         private string _playerId;
@@ -25,28 +24,26 @@ namespace SeaBattle.Client
         private ObservableCollection<RoomInfo> _rooms = new ObservableCollection<RoomInfo>();
         private string _currentRoomId;
 
-        public LobbyPage(TcpClient tcpClient, NetworkStream stream, string playerId, string playerName)
+        public LobbyPage(MainWindow mainWindow)
         {
             InitializeComponent();
 
-            _tcpClient = tcpClient;
-            _stream = stream;
-            _playerId = playerId;
-            _playerName = playerName;
+            _mainWindow = mainWindow;
+            _tcpClient = mainWindow.TcpClient;
+            _stream = mainWindow.Stream;
+            _playerId = mainWindow.PlayerId;
+            _playerName = mainWindow.PlayerName;
             _isConnected = true;
             _cancellationTokenSource = new CancellationTokenSource();
 
-            // Настройка UI
             PlayerNameText.Text = _playerName;
             RoomsListBox.ItemsSource = _rooms;
 
-            // Запускаем прослушивание сообщений
+            // Запускаем прослушивание
             Task.Run(() => ListenToServer(_cancellationTokenSource.Token));
 
             // Запрашиваем список комнат
             _ = RequestRoomsList();
-
-            AddChatMessage($"Добро пожаловать в лобби, {_playerName}!");
         }
 
         private async Task ListenToServer(CancellationToken cancellationToken)
@@ -55,27 +52,22 @@ namespace SeaBattle.Client
             {
                 byte[] buffer = new byte[4096];
 
-                while (_isConnected && _tcpClient?.Connected == true)
+                while (_isConnected && _tcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
                     try
                     {
-                        // Читаем длину сообщения
                         byte[] lengthBytes = new byte[4];
                         int lengthBytesRead = await _stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
                         if (lengthBytesRead < 4) break;
 
                         int messageLength = BitConverter.ToInt32(lengthBytes, 0);
-
-                        // Читаем само сообщение
                         byte[] messageBytes = new byte[messageLength];
                         int totalBytesRead = 0;
 
                         while (totalBytesRead < messageLength)
                         {
-                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead, messageLength - totalBytesRead, cancellationToken);
+                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead,
+                                messageLength - totalBytesRead, cancellationToken);
                             if (bytesRead == 0) break;
                             totalBytesRead += bytesRead;
                         }
@@ -83,14 +75,13 @@ namespace SeaBattle.Client
                         string json = Encoding.UTF8.GetString(messageBytes, 0, totalBytesRead);
                         var message = NetworkMessage.FromJson(json);
 
-                        // Обрабатываем сообщение в UI потоке
                         await Dispatcher.InvokeAsync(() => ProcessServerMessage(message));
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
-                    catch (Exception ex) when (ex is IOException || ex is ObjectDisposedException)
+                    catch (Exception ex) when (ex is System.IO.IOException || ex is ObjectDisposedException)
                     {
                         break;
                     }
@@ -102,8 +93,8 @@ namespace SeaBattle.Client
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
-                        AddChatMessage($"Ошибка соединения: {ex.Message}");
-                        ReturnToMainWindow();
+                        MessageBox.Show($"Ошибка соединения: {ex.Message}", "Ошибка",
+                                      MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
             }
@@ -131,22 +122,16 @@ namespace SeaBattle.Client
                         HandleStartGame(message);
                         break;
 
-                    case MessageType.ChatMessage:
-                        HandleChatMessage(message);
-                        break;
-
                     case MessageType.Error:
-                        AddChatMessage($"Ошибка: {message.Data?["Message"]}");
-                        break;
-
-                    case MessageType.Pong:
-                        // Игнорируем
+                        MessageBox.Show($"Ошибка: {message.Data?["Message"]}", "Ошибка",
+                                      MessageBoxButton.OK, MessageBoxImage.Error);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка обработки сообщения: {ex.Message}");
+                MessageBox.Show($"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -154,15 +139,14 @@ namespace SeaBattle.Client
         {
             var roomId = message.Data?["RoomId"]?.ToString();
             var roomName = message.Data?["RoomName"]?.ToString();
-            var msg = message.Data?["Message"]?.ToString();
-
-            AddChatMessage(msg);
 
             _currentRoomId = roomId;
             RoomStatusText.Text = $"Вы создали комнату: {roomName}";
-            UpdateRoomButtons(true);
 
-            // Обновляем список комнат
+            CreateRoomButton.IsEnabled = false;
+            LeaveRoomButton.IsEnabled = true;
+            StartGameButton.IsEnabled = true;
+
             _ = RequestRoomsList();
         }
 
@@ -170,15 +154,14 @@ namespace SeaBattle.Client
         {
             var roomId = message.Data?["RoomId"]?.ToString();
             var roomName = message.Data?["RoomName"]?.ToString();
-            var msg = message.Data?["Message"]?.ToString();
-
-            AddChatMessage(msg);
 
             _currentRoomId = roomId;
             RoomStatusText.Text = $"Вы в комнате: {roomName}";
-            UpdateRoomButtons(true);
 
-            // Обновляем список комнат
+            CreateRoomButton.IsEnabled = false;
+            LeaveRoomButton.IsEnabled = true;
+            StartGameButton.IsEnabled = true;
+
             _ = RequestRoomsList();
         }
 
@@ -207,30 +190,13 @@ namespace SeaBattle.Client
         {
             var gameData = message.Data.ToObject<GameStartData>();
 
-            AddChatMessage($"Игра начинается! Противник: {gameData.Player2?.Name ?? "ожидается"}");
-
-            // Здесь будет переход на страницу игры
-            // Пока просто выводим информацию
             RoomStatusText.Text = "Игра началась!";
             StartGameButton.IsEnabled = false;
-        }
 
-        private void HandleChatMessage(NetworkMessage message)
-        {
-            var msg = message.Data?["Message"]?.ToString();
-            var sender = message.Data?["OriginalSender"]?.ToString();
-
-            if (!string.IsNullOrEmpty(msg))
-            {
-                if (!string.IsNullOrEmpty(sender))
-                {
-                    AddChatMessage($"{sender}: {msg}");
-                }
-                else
-                {
-                    AddChatMessage($"Сервер: {msg}");
-                }
-            }
+            // Переходим на страницу игры
+            var gamePage = new GamePage(_tcpClient, _stream, _playerId, _playerName, gameData.RoomId);
+            var mainWindow = (MainWindow)Window.GetWindow(this);
+            mainWindow.Content = gamePage;
         }
 
         private async void CreateRoomButton_Click(object sender, RoutedEventArgs e)
@@ -238,7 +204,7 @@ namespace SeaBattle.Client
             string roomName = RoomNameTextBox.Text.Trim();
             if (string.IsNullOrEmpty(roomName))
             {
-                AddChatMessage("Введите название комнаты");
+                MessageBox.Show("Введите название комнаты", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
@@ -258,7 +224,8 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка создания комнаты: {ex.Message}");
+                MessageBox.Show($"Ошибка создания комнаты: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -281,11 +248,17 @@ namespace SeaBattle.Client
 
                 _currentRoomId = null;
                 RoomStatusText.Text = "Не в комнате";
-                UpdateRoomButtons(false);
+
+                CreateRoomButton.IsEnabled = true;
+                LeaveRoomButton.IsEnabled = false;
+                StartGameButton.IsEnabled = false;
+
+                _ = RequestRoomsList();
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка выхода из комнаты: {ex.Message}");
+                MessageBox.Show($"Ошибка выхода из комнаты: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -293,7 +266,7 @@ namespace SeaBattle.Client
         {
             if (string.IsNullOrEmpty(_currentRoomId))
             {
-                AddChatMessage("Вы не в комнате");
+                MessageBox.Show("Вы не в комнате", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
@@ -313,7 +286,8 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка начала игры: {ex.Message}");
+                MessageBox.Show($"Ошибка начала игры: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -343,7 +317,8 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка присоединения к комнате: {ex.Message}");
+                MessageBox.Show($"Ошибка присоединения к комнате: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -361,51 +336,8 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                AddChatMessage($"Ошибка запроса списка комнат: {ex.Message}");
-            }
-        }
-
-        private async void SendChatButton_Click(object sender, RoutedEventArgs e)
-        {
-            await SendChatMessage();
-        }
-
-        private async void ChatTextBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter)
-            {
-                await SendChatMessage();
-            }
-        }
-
-        private async Task SendChatMessage()
-        {
-            string messageText = ChatTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(messageText))
-                return;
-
-            try
-            {
-                var message = new NetworkMessage
-                {
-                    Type = MessageType.ChatMessage,
-                    SenderId = _playerId,
-                    Data = JObject.FromObject(new ChatMessageData
-                    {
-                        Message = messageText,
-                        SenderName = _playerName
-                    })
-                };
-
-                await SendMessageAsync(message);
-
-                // Отображаем свое сообщение
-                AddChatMessage($"Вы: {messageText}");
-                ChatTextBox.Text = "";
-            }
-            catch (Exception ex)
-            {
-                AddChatMessage($"Ошибка отправки: {ex.Message}");
+                MessageBox.Show($"Ошибка запроса списка комнат: {ex.Message}", "Ошибка",
+                              MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -423,73 +355,20 @@ namespace SeaBattle.Client
             await _stream.FlushAsync();
         }
 
-        private void AddChatMessage(string message)
-        {
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            ChatTextBlock.Text += $"[{timestamp}] {message}\n";
-
-            // Прокручиваем вниз
-            var scrollViewer = GetChildOfType<ScrollViewer>(ChatTextBlock.Parent as DependencyObject);
-            scrollViewer?.ScrollToEnd();
-        }
-
-        private T GetChildOfType<T>(DependencyObject depObj) where T : DependencyObject
-        {
-            if (depObj == null) return null;
-
-            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj); i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
-
-                var result = (child as T) ?? GetChildOfType<T>(child);
-                if (result != null) return result;
-            }
-
-            return null;
-        }
-
-        private void UpdateRoomButtons(bool inRoom)
-        {
-            CreateRoomButton.IsEnabled = !inRoom;
-            LeaveRoomButton.IsEnabled = inRoom;
-            StartGameButton.IsEnabled = inRoom;
-
-            if (inRoom)
-            {
-                CreateRoomButton.Opacity = 0.5;
-                LeaveRoomButton.Opacity = 1;
-                StartGameButton.Opacity = 1;
-            }
-            else
-            {
-                CreateRoomButton.Opacity = 1;
-                LeaveRoomButton.Opacity = 0.5;
-                StartGameButton.Opacity = 0.5;
-            }
-        }
-
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            ReturnToMainWindow();
-        }
-
-        private void ReturnToMainWindow()
-        {
-            _isConnected = false;
-            _cancellationTokenSource?.Cancel();
-
-            var mainWindow = (MainWindow)Window.GetWindow(this);
-            mainWindow.ReturnToMainPage();
+            // Возвращаемся в главное окно, НО НЕ ОТКЛЮЧАЕМСЯ
+            var mainWindow = new MainWindow();
+            var currentWindow = (MainWindow)Window.GetWindow(this);
+            currentWindow.Content = mainWindow.Content;
         }
 
         private void Page_Unloaded(object sender, RoutedEventArgs e)
         {
-            _isConnected = false;
-            _cancellationTokenSource?.Cancel();
+            // НЕ ОТКЛЮЧАЕМСЯ!
         }
     }
 
-    // Классы для отображения в UI
     public class RoomInfo
     {
         public string Id { get; set; }

@@ -18,38 +18,87 @@ namespace SeaBattle.Shared.Models
     // Корабль
     public class Ship
     {
+        private string _id;
+        private int _size;
+        private List<ShipCell> _cells;
+        private bool _isPlaced;
+
         [JsonProperty("id")]
-        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string Id
+        {
+            get { return _id; }
+            set { _id = value; }
+        }
 
         [JsonProperty("size")]
-        public int Size { get; set; }
+        public int Size
+        {
+            get { return _size; }
+            set { _size = value; }
+        }
 
         [JsonProperty("cells")]
-        public List<ShipCell> Cells { get; set; } = new List<ShipCell>();
+        public List<ShipCell> Cells
+        {
+            get { return _cells; }
+            set { _cells = value; }
+        }
 
         [JsonProperty("isPlaced")]
-        public bool IsPlaced { get; set; }
-
-        [JsonProperty("isDestroyed")]
-        public bool IsDestroyed => Cells != null && Cells.All(c => c.IsHit);
-
-        public Ship(int size)
+        public bool IsPlaced
         {
-            Size = size;
+            get { return _isPlaced; }
+            set { _isPlaced = value; }
+        }
+
+        public bool IsDestroyed
+        {
+            get
+            {
+                if (_cells == null) return false;
+                return _cells.All(c => c.IsHit);
+            }
+        }
+
+        public Ship()
+        {
+            _id = Guid.NewGuid().ToString();
+            _cells = new List<ShipCell>();
+        }
+
+        public Ship(int size) : this()
+        {
+            _size = size;
         }
     }
 
     // Клетка корабля
     public class ShipCell
     {
+        private int _x;
+        private int _y;
+        private bool _isHit;
+
         [JsonProperty("x")]
-        public int X { get; set; }
+        public int X
+        {
+            get { return _x; }
+            set { _x = value; }
+        }
 
         [JsonProperty("y")]
-        public int Y { get; set; }
+        public int Y
+        {
+            get { return _y; }
+            set { _y = value; }
+        }
 
         [JsonProperty("isHit")]
-        public bool IsHit { get; set; }
+        public bool IsHit
+        {
+            get { return _isHit; }
+            set { _isHit = value; }
+        }
     }
 
     // Игровое поле
@@ -57,38 +106,58 @@ namespace SeaBattle.Shared.Models
     {
         public const int BoardSize = 10;
 
+        private CellState[,] _cells;
+        private List<Ship> _ships;
+        private bool[,] _visibleCells;
+
         [JsonProperty("cells")]
-        public CellState[,] Cells { get; set; } = new CellState[BoardSize, BoardSize];
+        public CellState[,] Cells
+        {
+            get { return _cells; }
+            set { _cells = value; }
+        }
 
         [JsonProperty("ships")]
-        public List<Ship> Ships { get; set; } = new List<Ship>();
+        public List<Ship> Ships
+        {
+            get { return _ships; }
+            set { _ships = value; }
+        }
 
         [JsonProperty("visibleCells")]
-        public bool[,] VisibleCells { get; set; } = new bool[BoardSize, BoardSize];
+        public bool[,] VisibleCells
+        {
+            get { return _visibleCells; }
+            set { _visibleCells = value; }
+        }
 
         public GameBoard()
         {
+            _cells = new CellState[BoardSize, BoardSize];
+            _visibleCells = new bool[BoardSize, BoardSize];
+            _ships = new List<Ship>();
+
             // Инициализация пустого поля
             for (int x = 0; x < BoardSize; x++)
             {
                 for (int y = 0; y < BoardSize; y++)
                 {
-                    Cells[x, y] = CellState.Empty;
-                    VisibleCells[x, y] = false;
+                    _cells[x, y] = CellState.Empty;
+                    _visibleCells[x, y] = false;
                 }
             }
 
             // Добавляем корабли по умолчанию
-            Ships.Add(new Ship(4)); // 1 четырехпалубный
-            Ships.Add(new Ship(3)); // 1 трехпалубный
-            Ships.Add(new Ship(3)); // 2 трехпалубный
-            Ships.Add(new Ship(2)); // 1 двухпалубный
-            Ships.Add(new Ship(2)); // 2 двухпалубный
-            Ships.Add(new Ship(2)); // 3 двухпалубный
-            Ships.Add(new Ship(1)); // 1 однопалубный
-            Ships.Add(new Ship(1)); // 2 однопалубный
-            Ships.Add(new Ship(1)); // 3 однопалубный
-            Ships.Add(new Ship(1)); // 4 однопалубный
+            _ships.Add(new Ship(4)); // 1 четырехпалубный
+            _ships.Add(new Ship(3)); // 1 трехпалубный
+            _ships.Add(new Ship(3)); // 2 трехпалубный
+            _ships.Add(new Ship(2)); // 1 двухпалубный
+            _ships.Add(new Ship(2)); // 2 двухпалубный
+            _ships.Add(new Ship(2)); // 3 двухпалубный
+            _ships.Add(new Ship(1)); // 1 однопалубный
+            _ships.Add(new Ship(1)); // 2 однопалубный
+            _ships.Add(new Ship(1)); // 3 однопалубный
+            _ships.Add(new Ship(1)); // 4 однопалубный
         }
 
         // Проверка можно ли разместить корабль
@@ -121,7 +190,7 @@ namespace SeaBattle.Shared.Models
                         if (checkX >= 0 && checkX < BoardSize &&
                             checkY >= 0 && checkY < BoardSize)
                         {
-                            if (Cells[checkX, checkY] == CellState.Ship)
+                            if (_cells[checkX, checkY] == CellState.Ship)
                             {
                                 return false;
                             }
@@ -144,17 +213,17 @@ namespace SeaBattle.Shared.Models
                 int cellX = isHorizontal ? x + i : x;
                 int cellY = isHorizontal ? y : y + i;
 
-                Cells[cellX, cellY] = CellState.Ship;
-                ship.Cells.Add(new ShipCell { X = cellX, Y = cellY });
+                _cells[cellX, cellY] = CellState.Ship;
+                ship.Cells.Add(new ShipCell { X = cellX, Y = cellY, IsHit = false });
             }
         }
 
         // Случайная расстановка
         public void RandomPlacement()
         {
-            var random = new Random();
+            Random random = new Random();
 
-            foreach (var ship in Ships)
+            foreach (Ship ship in _ships)
             {
                 bool placed = false;
                 int attempts = 0;
@@ -176,88 +245,130 @@ namespace SeaBattle.Shared.Models
         }
 
         // Проверка готовности (все корабли размещены)
-        public bool IsReady => Ships.All(s => s.IsPlaced);
+        public bool IsReady
+        {
+            get
+            {
+                foreach (Ship ship in _ships)
+                {
+                    if (!ship.IsPlaced) return false;
+                }
+                return true;
+            }
+        }
 
         // Проверка все ли корабли уничтожены
-        public bool AllShipsDestroyed => Ships.All(s => s.IsDestroyed);
+        public bool AllShipsDestroyed
+        {
+            get
+            {
+                foreach (Ship ship in _ships)
+                {
+                    if (!ship.IsDestroyed) return false;
+                }
+                return true;
+            }
+        }
 
         // Атака
         public AttackResult Attack(int x, int y)
         {
+            AttackResult result = new AttackResult();
+            result.X = x;
+            result.Y = y;
+
             if (x < 0 || x >= BoardSize || y < 0 || y >= BoardSize)
             {
-                return new AttackResult { IsValid = false, Message = "Неверные координаты" };
+                result.IsValid = false;
+                result.Message = "Неверные координаты";
+                return result;
             }
 
-            if (Cells[x, y] == CellState.Hit || Cells[x, y] == CellState.Miss)
+            if (_cells[x, y] == CellState.Hit || _cells[x, y] == CellState.Miss)
             {
-                return new AttackResult { IsValid = false, Message = "Сюда уже стреляли" };
+                result.IsValid = false;
+                result.Message = "Сюда уже стреляли";
+                return result;
             }
 
-            VisibleCells[x, y] = true;
+            _visibleCells[x, y] = true;
 
-            if (Cells[x, y] == CellState.Ship)
+            if (_cells[x, y] == CellState.Ship)
             {
-                Cells[x, y] = CellState.Hit;
+                _cells[x, y] = CellState.Hit;
 
                 // Находим корабль
-                var ship = Ships.FirstOrDefault(s =>
-                    s.Cells.Any(c => c.X == x && c.Y == y));
+                Ship ship = null;
+                foreach (Ship s in _ships)
+                {
+                    foreach (ShipCell c in s.Cells)
+                    {
+                        if (c.X == x && c.Y == y)
+                        {
+                            ship = s;
+                            break;
+                        }
+                    }
+                    if (ship != null) break;
+                }
 
                 if (ship != null)
                 {
-                    var cell = ship.Cells.First(c => c.X == x && c.Y == y);
-                    cell.IsHit = true;
+                    // Находим клетку корабля
+                    foreach (ShipCell cell in ship.Cells)
+                    {
+                        if (cell.X == x && cell.Y == y)
+                        {
+                            cell.IsHit = true;
+                            break;
+                        }
+                    }
 
                     if (ship.IsDestroyed)
                     {
                         // Отмечаем все клетки уничтоженного корабля
-                        foreach (var c in ship.Cells)
+                        foreach (ShipCell c in ship.Cells)
                         {
-                            Cells[c.X, c.Y] = CellState.Destroyed;
+                            _cells[c.X, c.Y] = CellState.Destroyed;
                         }
 
                         // Отмечаем ореол
                         MarkPerimeter(ship);
 
-                        return new AttackResult
-                        {
-                            IsValid = true,
-                            IsHit = true,
-                            IsDestroyed = true,
-                            ShipSize = ship.Size,
-                            Message = "Корабль уничтожен!"
-                        };
+                        result.IsValid = true;
+                        result.IsHit = true;
+                        result.IsDestroyed = true;
+                        result.ShipSize = ship.Size;
+                        result.Message = "Корабль уничтожен!";
+                        return result;
                     }
 
-                    return new AttackResult
-                    {
-                        IsValid = true,
-                        IsHit = true,
-                        IsDestroyed = false,
-                        Message = "Попадание!"
-                    };
+                    result.IsValid = true;
+                    result.IsHit = true;
+                    result.IsDestroyed = false;
+                    result.Message = "Попадание!";
+                    return result;
                 }
             }
             else
             {
-                Cells[x, y] = CellState.Miss;
-                return new AttackResult
-                {
-                    IsValid = true,
-                    IsHit = false,
-                    IsDestroyed = false,
-                    Message = "Промах"
-                };
+                _cells[x, y] = CellState.Miss;
+                result.IsValid = true;
+                result.IsHit = false;
+                result.IsDestroyed = false;
+                result.Message = "Промах";
+                return result;
             }
 
-            return new AttackResult { IsValid = false, Message = "Ошибка атаки" };
+            result.IsValid = false;
+            result.Message = "Ошибка атаки";
+            return result;
         }
 
         // Отметка ореола вокруг уничтоженного корабля
         private void MarkPerimeter(Ship ship)
         {
-            foreach (var cell in ship.Cells)
+            foreach (ShipCell cell in ship.Cells)
             {
                 for (int dx = -1; dx <= 1; dx++)
                 {
@@ -268,10 +379,10 @@ namespace SeaBattle.Shared.Models
 
                         if (x >= 0 && x < BoardSize && y >= 0 && y < BoardSize)
                         {
-                            if (Cells[x, y] == CellState.Empty)
+                            if (_cells[x, y] == CellState.Empty)
                             {
-                                Cells[x, y] = CellState.Miss;
-                                VisibleCells[x, y] = true;
+                                _cells[x, y] = CellState.Miss;
+                                _visibleCells[x, y] = true;
                             }
                         }
                     }
@@ -283,100 +394,240 @@ namespace SeaBattle.Shared.Models
     // Результат атаки
     public class AttackResult
     {
+        private bool _isValid;
+        private bool _isHit;
+        private bool _isDestroyed;
+        private int _shipSize;
+        private string _message;
+        private int _x;
+        private int _y;
+        private bool _isGameOver;
+        private string _winnerId;
+
         [JsonProperty("isValid")]
-        public bool IsValid { get; set; }
+        public bool IsValid
+        {
+            get { return _isValid; }
+            set { _isValid = value; }
+        }
 
         [JsonProperty("isHit")]
-        public bool IsHit { get; set; }
+        public bool IsHit
+        {
+            get { return _isHit; }
+            set { _isHit = value; }
+        }
 
         [JsonProperty("isDestroyed")]
-        public bool IsDestroyed { get; set; }
+        public bool IsDestroyed
+        {
+            get { return _isDestroyed; }
+            set { _isDestroyed = value; }
+        }
 
         [JsonProperty("shipSize")]
-        public int ShipSize { get; set; }
+        public int ShipSize
+        {
+            get { return _shipSize; }
+            set { _shipSize = value; }
+        }
 
         [JsonProperty("message")]
-        public string Message { get; set; }
+        public string Message
+        {
+            get { return _message; }
+            set { _message = value; }
+        }
 
         [JsonProperty("x")]
-        public int X { get; set; }
+        public int X
+        {
+            get { return _x; }
+            set { _x = value; }
+        }
 
         [JsonProperty("y")]
-        public int Y { get; set; }
+        public int Y
+        {
+            get { return _y; }
+            set { _y = value; }
+        }
 
         [JsonProperty("isGameOver")]
-        public bool IsGameOver { get; set; }
+        public bool IsGameOver
+        {
+            get { return _isGameOver; }
+            set { _isGameOver = value; }
+        }
 
         [JsonProperty("winnerId")]
-        public string WinnerId { get; set; }
+        public string WinnerId
+        {
+            get { return _winnerId; }
+            set { _winnerId = value; }
+        }
     }
 
     // Состояние игры
     public class GameState
     {
+        private string _roomId;
+        private GameBoard _myBoard;
+        private GameBoard _enemyBoard;
+        private string _currentTurnPlayerId;
+        private string _myPlayerId;
+        private string _enemyPlayerId;
+        private string _enemyPlayerName;
+        private string _phase;
+        private int _timeLeft;
+
         [JsonProperty("roomId")]
-        public string RoomId { get; set; }
+        public string RoomId
+        {
+            get { return _roomId; }
+            set { _roomId = value; }
+        }
 
         [JsonProperty("myBoard")]
-        public GameBoard MyBoard { get; set; }
+        public GameBoard MyBoard
+        {
+            get { return _myBoard; }
+            set { _myBoard = value; }
+        }
 
         [JsonProperty("enemyBoard")]
-        public GameBoard EnemyBoard { get; set; }
+        public GameBoard EnemyBoard
+        {
+            get { return _enemyBoard; }
+            set { _enemyBoard = value; }
+        }
 
         [JsonProperty("currentTurnPlayerId")]
-        public string CurrentTurnPlayerId { get; set; }
+        public string CurrentTurnPlayerId
+        {
+            get { return _currentTurnPlayerId; }
+            set { _currentTurnPlayerId = value; }
+        }
 
         [JsonProperty("myPlayerId")]
-        public string MyPlayerId { get; set; }
+        public string MyPlayerId
+        {
+            get { return _myPlayerId; }
+            set { _myPlayerId = value; }
+        }
 
         [JsonProperty("enemyPlayerId")]
-        public string EnemyPlayerId { get; set; }
+        public string EnemyPlayerId
+        {
+            get { return _enemyPlayerId; }
+            set { _enemyPlayerId = value; }
+        }
 
         [JsonProperty("enemyPlayerName")]
-        public string EnemyPlayerName { get; set; }
+        public string EnemyPlayerName
+        {
+            get { return _enemyPlayerName; }
+            set { _enemyPlayerName = value; }
+        }
 
         [JsonProperty("phase")]
-        public string Phase { get; set; } // Placement, Battle, Finished
+        public string Phase
+        {
+            get { return _phase; }
+            set { _phase = value; }
+        }
 
         [JsonProperty("timeLeft")]
-        public int TimeLeft { get; set; }
+        public int TimeLeft
+        {
+            get { return _timeLeft; }
+            set { _timeLeft = value; }
+        }
     }
 
     // Данные для размещения кораблей
     public class PlaceShipsData
     {
+        private string _roomId;
+        private List<ShipPlacement> _ships;
+
         [JsonProperty("roomId")]
-        public string RoomId { get; set; }
+        public string RoomId
+        {
+            get { return _roomId; }
+            set { _roomId = value; }
+        }
 
         [JsonProperty("ships")]
-        public List<ShipPlacement> Ships { get; set; }
+        public List<ShipPlacement> Ships
+        {
+            get { return _ships; }
+            set { _ships = value; }
+        }
     }
 
     public class ShipPlacement
     {
+        private string _shipId;
+        private int _x;
+        private int _y;
+        private bool _isHorizontal;
+
         [JsonProperty("shipId")]
-        public string ShipId { get; set; }
+        public string ShipId
+        {
+            get { return _shipId; }
+            set { _shipId = value; }
+        }
 
         [JsonProperty("x")]
-        public int X { get; set; }
+        public int X
+        {
+            get { return _x; }
+            set { _x = value; }
+        }
 
         [JsonProperty("y")]
-        public int Y { get; set; }
+        public int Y
+        {
+            get { return _y; }
+            set { _y = value; }
+        }
 
         [JsonProperty("isHorizontal")]
-        public bool IsHorizontal { get; set; }
+        public bool IsHorizontal
+        {
+            get { return _isHorizontal; }
+            set { _isHorizontal = value; }
+        }
     }
 
     // Данные для атаки
     public class AttackData
     {
+        private string _roomId;
+        private int _x;
+        private int _y;
+
         [JsonProperty("roomId")]
-        public string RoomId { get; set; }
+        public string RoomId
+        {
+            get { return _roomId; }
+            set { _roomId = value; }
+        }
 
         [JsonProperty("x")]
-        public int X { get; set; }
+        public int X
+        {
+            get { return _x; }
+            set { _x = value; }
+        }
 
         [JsonProperty("y")]
-        public int Y { get; set; }
+        public int Y
+        {
+            get { return _y; }
+            set { _y = value; }
+        }
     }
 }
