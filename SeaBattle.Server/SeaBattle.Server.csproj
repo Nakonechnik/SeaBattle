@@ -100,15 +100,23 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="GameServer.cs" />
+    <Compile Include="LobbyManager.cs" />
+    <Compile Include="Models\ConnectedPlayer.cs" />
     <Compile Include="Models\GameRoom.cs" />
-    <Compile Include="Models\NetworkMessage.cs" />
-    <Compile Include="Models\Player.cs" />
+    <Compile Include="Models\PlayerStatus.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SeaBattle.Shared\SeaBattle.Shared.csproj">
+      <Project>{b4933fd6-310b-4cfa-8841-0bf425529873}</Project>
+      <Name>SeaBattle.Shared</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" />
