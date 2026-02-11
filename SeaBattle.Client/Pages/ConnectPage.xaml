@@ -1,0 +1,46 @@
+﻿<Page x:Class="SeaBattle.Client.ConnectPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Title="Подключение к серверу">
+    <Grid Background="#FF1E1E1E">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock Text="Подключение к серверу"
+                      Foreground="White"
+                      FontSize="28"
+                      FontWeight="Bold"
+                      Margin="0,0,0,30"
+                      HorizontalAlignment="Center"/>
+
+            <TextBlock Text="Адрес сервера:" Foreground="White" Margin="0,0,0,5"/>
+            <TextBox x:Name="ServerAddressTextBox" 
+                    Text="127.0.0.1" 
+                    Width="200" 
+                    Margin="0,0,0,15"/>
+
+            <TextBlock Text="Порт:" Foreground="White" Margin="0,0,0,5"/>
+            <TextBox x:Name="PortTextBox" 
+                    Text="8888" 
+                    Width="100" 
+                    Margin="0,0,0,15"/>
+
+            <TextBlock Text="Ваше имя:" Foreground="White" Margin="0,0,0,5"/>
+            <TextBox x:Name="PlayerNameTextBox" 
+                    Text="Игрок" 
+                    Width="200" 
+                    Margin="0,0,0,30"/>
+
+            <Button x:Name="ConnectButton"
+                   Content="Подключиться"
+                   Click="ConnectButton_Click"
+                   Width="150"
+                   Height="40"
+                   Margin="0,0,0,10"/>
+
+            <Button x:Name="ExitButton"
+                   Content="Выход"
+                   Click="ExitButton_Click"
+                   Width="100"
+                   Height="40"/>
+        </StackPanel>
+    </Grid>
+</Page>
