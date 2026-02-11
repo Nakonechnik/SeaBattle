@@ -27,14 +27,17 @@ namespace SeaBattle.Shared.Models
         PlayerLeftRoom = 108,
         StartGame = 109,
 
+        GameReady = 110,        // Игрок готов к игре
+        GameState = 111,       // Состояние игры
+        Attack = 112,          // Атака
+        AttackResult = 113,    // Результат атаки
+        GameOver = 114,        // Игра окончена
+        TurnChanged = 115,     // Смена хода
+        TimerUpdate = 116,     // Обновление таймера
+
         // Игра
         PlaceShips = 200,
         ShipsPlaced = 201,
-        Attack = 202,
-        AttackResult = 203,
-        GameState = 204,
-        GameOver = 205,
-        TurnChanged = 206,
 
         // Чат
         ChatMessage = 300

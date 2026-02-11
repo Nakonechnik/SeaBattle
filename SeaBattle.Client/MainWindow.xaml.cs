@@ -1,5 +1,5 @@
 ﻿using System;
-using System.IO; // Добавьте эту строку
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -59,31 +59,14 @@ namespace SeaBattle.Client
                 // Отправляем запрос на подключение
                 await SendConnectRequest();
             }
+            catch (FormatException)
+            {
+                AddMessage("Ошибка: неверный формат порта");
+            }
             catch (Exception ex)
             {
                 AddMessage($"Ошибка подключения: {ex.Message}");
             }
-        }
-
-        public void NavigateToLobby(string playerId, string playerName)
-        {
-            var lobbyPage = new LobbyPage(_tcpClient, _stream, playerId, playerName);
-            Content = lobbyPage;
-        }
-
-        public void ReturnToMainPage()
-        {
-            _tcpClient?.Close();
-            _tcpClient = null;
-            _stream = null;
-            _isConnected = false;
-            _playerId = null;
-
-            UpdateUI();
-
-            var mainPage = new MainWindow();
-            var mainWindow = Application.Current.MainWindow as MainWindow;
-            mainWindow.Content = mainPage.Content;
         }
 
         private async Task SendConnectRequest()
@@ -149,7 +132,6 @@ namespace SeaBattle.Client
             {
                 if (_isConnected && _stream != null)
                 {
-                    // Отправляем сообщение об отключении
                     var disconnectMessage = new NetworkMessage
                     {
                         Type = MessageType.Disconnect
@@ -173,6 +155,9 @@ namespace SeaBattle.Client
 
                 AddMessage("Отключено от сервера");
                 UpdateUI();
+
+                // Возвращаемся на главную страницу
+                ReturnToMainPage();
             }
         }
 
@@ -188,8 +173,6 @@ namespace SeaBattle.Client
             await _stream.WriteAsync(length, 0, 4);
             await _stream.WriteAsync(data, 0, data.Length);
             await _stream.FlushAsync();
-
-            AddMessage($"Отправлено: {message.Type}");
         }
 
         private async Task ListenToServer(CancellationToken cancellationToken)
@@ -198,27 +181,22 @@ namespace SeaBattle.Client
             {
                 byte[] buffer = new byte[4096];
 
-                while (_isConnected && _tcpClient?.Connected == true)
+                while (_isConnected && _tcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
                     try
                     {
-                        // Читаем длину сообщения
                         byte[] lengthBytes = new byte[4];
                         int lengthBytesRead = await _stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
                         if (lengthBytesRead < 4) break;
 
                         int messageLength = BitConverter.ToInt32(lengthBytes, 0);
-
-                        // Читаем само сообщение
                         byte[] messageBytes = new byte[messageLength];
                         int totalBytesRead = 0;
 
                         while (totalBytesRead < messageLength)
                         {
-                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead, messageLength - totalBytesRead, cancellationToken);
+                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead,
+                                messageLength - totalBytesRead, cancellationToken);
                             if (bytesRead == 0) break;
                             totalBytesRead += bytesRead;
                         }
@@ -226,7 +204,6 @@ namespace SeaBattle.Client
                         string json = Encoding.UTF8.GetString(messageBytes, 0, totalBytesRead);
                         var message = NetworkMessage.FromJson(json);
 
-                        // Обрабатываем сообщение в UI потоке
                         await Dispatcher.InvokeAsync(() => ProcessServerMessage(message));
                     }
                     catch (OperationCanceledException)
@@ -256,9 +233,6 @@ namespace SeaBattle.Client
         {
             try
             {
-                string serverMessage = message.Data?["Message"]?.ToString() ?? "Нет данных";
-                AddMessage($"Сервер [{message.Type}]: {serverMessage}");
-
                 switch (message.Type)
                 {
                     case MessageType.ConnectResponse:
@@ -274,7 +248,7 @@ namespace SeaBattle.Client
                         break;
 
                     case MessageType.Pong:
-                        // Игнорируем Pong сообщения
+                        // Игнорируем
                         break;
                 }
             }
@@ -292,7 +266,9 @@ namespace SeaBattle.Client
             {
                 _playerId = data.PlayerId;
                 AddMessage($"Успешное подключение! Ваш ID: {_playerId}");
-                StatusText.Text = $"Подключено как {_playerName}";
+
+                // !!! ВАЖНО: Переходим в лобби !!!
+                NavigateToLobby();
             }
             else
             {
@@ -303,12 +279,46 @@ namespace SeaBattle.Client
 
         private void HandleChatMessage(NetworkMessage message)
         {
-            // Просто логируем полученные чат сообщения
-            var originalSender = message.Data?["OriginalSender"]?.ToString();
-            if (!string.IsNullOrEmpty(originalSender))
+            var msg = message.Data?["Message"]?.ToString();
+            var sender = message.Data?["OriginalSender"]?.ToString();
+
+            if (!string.IsNullOrEmpty(msg))
             {
-                AddMessage($"{originalSender}: {message.Data?["Message"]}");
+                if (!string.IsNullOrEmpty(sender))
+                {
+                    AddMessage($"{sender}: {msg}");
+                }
+                else
+                {
+                    AddMessage($"Сервер: {msg}");
+                }
             }
+        }
+
+        // !!! ВАЖНО: Метод для перехода в лобби !!!
+        public void NavigateToLobby()
+        {
+            // Создаем страницу лобби
+            var lobbyPage = new LobbyPage(_tcpClient, _stream, _playerId, _playerName);
+
+            // Получаем родительское окно и меняем содержимое
+            var mainWindow = Application.Current.MainWindow as MainWindow;
+            if (mainWindow != null)
+            {
+                // Меняем содержимое окна на страницу лобби
+                mainWindow.Content = lobbyPage;
+            }
+        }
+
+        public void ReturnToMainPage()
+        {
+            // Возвращаемся к главному окну
+            var mainWindow = new MainWindow();
+            Application.Current.MainWindow = mainWindow;
+            mainWindow.Show();
+
+            // Закрываем текущее окно
+            Close();
         }
 
         private void AddMessage(string message)
@@ -316,7 +326,6 @@ namespace SeaBattle.Client
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             MessageTextBlock.Text += $"[{timestamp}] {message}\n";
 
-            // Прокручиваем вниз
             var scrollViewer = GetChildOfType<System.Windows.Controls.ScrollViewer>(MessageTextBlock.Parent as DependencyObject);
             scrollViewer?.ScrollToEnd();
         }
@@ -328,7 +337,6 @@ namespace SeaBattle.Client
             for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj); i++)
             {
                 var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
-
                 var result = (child as T) ?? GetChildOfType<T>(child);
                 if (result != null) return result;
             }
@@ -352,12 +360,6 @@ namespace SeaBattle.Client
                 System.Windows.Media.Brushes.LightCoral;
         }
 
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-        {
-            Disconnect();
-            base.OnClosing(e);
-        }
-
         private void MessageTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
             if (e.Key == System.Windows.Input.Key.Enter && SendButton.IsEnabled)
@@ -366,6 +368,10 @@ namespace SeaBattle.Client
             }
         }
 
-
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            Disconnect();
+            base.OnClosing(e);
+        }
     }
 }
