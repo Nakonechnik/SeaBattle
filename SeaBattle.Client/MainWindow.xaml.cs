@@ -1,196 +1,241 @@
 ﻿using System;
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace SeaBattle.Client
 {
     public partial class MainWindow : Window
     {
-        private TcpClient _client;
+        private TcpClient _tcpClient;
         private NetworkStream _stream;
         private bool _isConnected;
+        private CancellationTokenSource _cancellationTokenSource;
 
         public MainWindow()
         {
             InitializeComponent();
-            UpdateStatus("Не подключено");
+            _isConnected = false;
+            UpdateUI();
         }
 
-        private void ConnectButton_Click(object sender, RoutedEventArgs e)
+        private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
-            ConnectToServer();
+            try
+            {
+                string serverAddress = ServerAddressTextBox.Text;
+                int port = int.Parse(PortTextBox.Text);
+
+                AddMessage($"Подключение к {serverAddress}:{port}...");
+
+                _tcpClient = new TcpClient();
+                await _tcpClient.ConnectAsync(serverAddress, port);
+
+                _stream = _tcpClient.GetStream();
+                _isConnected = true;
+                _cancellationTokenSource = new CancellationTokenSource();
+
+                AddMessage("Успешно подключено!");
+                UpdateUI();
+
+                // Запускаем прослушивание сообщений от сервера
+                _ = Task.Run(() => ListenToServer(_cancellationTokenSource.Token));
+
+                // Читаем приветственное сообщение от сервера
+                await ReadWelcomeMessage();
+            }
+            catch (FormatException)
+            {
+                AddMessage("Ошибка: неверный формат порта");
+            }
+            catch (Exception ex)
+            {
+                AddMessage($"Ошибка подключения: {ex.Message}");
+            }
+        }
+
+        private async Task ReadWelcomeMessage()
+        {
+            try
+            {
+                byte[] buffer = new byte[1024];
+                int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
+                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                AddMessage($"Сервер: {message}");
+            }
+            catch (Exception ex)
+            {
+                AddMessage($"Ошибка чтения приветствия: {ex.Message}");
+            }
+        }
+
+        private async void SendButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected || _tcpClient == null)
+            {
+                AddMessage("Сначала подключитесь к серверу");
+                return;
+            }
+
+            string message = MessageTextBox.Text.Trim();
+            if (string.IsNullOrEmpty(message))
+            {
+                AddMessage("Введите сообщение для отправки");
+                return;
+            }
+
+            try
+            {
+                byte[] data = Encoding.UTF8.GetBytes(message + "\n");
+
+                await _stream.WriteAsync(data, 0, data.Length);
+                AddMessage($"Вы: {message}");
+                MessageTextBox.Text = "";
+            }
+            catch (Exception ex)
+            {
+                AddMessage($"Ошибка отправки: {ex.Message}");
+                Disconnect();
+            }
         }
 
         private void DisconnectButton_Click(object sender, RoutedEventArgs e)
         {
-            DisconnectFromServer();
+            Disconnect();
         }
 
-        private void SendButton_Click(object sender, RoutedEventArgs e)
-        {
-            SendMessage();
-        }
-
-        private async void ConnectToServer()
-        {
-            try
-            {
-                string server = ServerTextBox.Text;
-                int port = int.Parse(PortTextBox.Text);
-
-                UpdateStatus($"Подключение к {server}:{port}...");
-
-                _client = new TcpClient();
-                await _client.ConnectAsync(server, port);
-
-                _stream = _client.GetStream();
-                _isConnected = true;
-
-                UpdateStatus($"Подключено к {server}:{port}");
-                AddLog("Подключение установлено");
-
-                // Включаем кнопки
-                ConnectButton.IsEnabled = false;
-                DisconnectButton.IsEnabled = true;
-                SendButton.IsEnabled = true;
-
-                // Запускаем получение сообщений
-                Task.Run(() => ReceiveMessages());
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"Ошибка подключения: {ex.Message}");
-                AddLog($"Ошибка: {ex.Message}");
-            }
-        }
-
-        private void DisconnectFromServer()
+        private void Disconnect()
         {
             try
             {
                 _isConnected = false;
 
-                if (_stream != null)
-                {
-                    // Отправляем сообщение о выходе
-                    byte[] data = Encoding.UTF8.GetBytes("exit");
-                    _stream.Write(data, 0, data.Length);
+                // Отменяем задачу прослушивания
+                _cancellationTokenSource?.Cancel();
 
-                    _stream.Close();
-                    _stream = null;
-                }
+                // Закрываем соединение
+                _stream?.Close();
+                _tcpClient?.Close();
 
-                if (_client != null)
-                {
-                    _client.Close();
-                    _client = null;
-                }
-
-                UpdateStatus("Отключено");
-                AddLog("Соединение разорвано");
-
-                // Обновляем кнопки
-                ConnectButton.IsEnabled = true;
-                DisconnectButton.IsEnabled = false;
-                SendButton.IsEnabled = false;
+                AddMessage("Отключено от сервера");
+                UpdateUI();
             }
             catch (Exception ex)
             {
-                UpdateStatus($"Ошибка отключения: {ex.Message}");
-                AddLog($"Ошибка: {ex.Message}");
+                AddMessage($"Ошибка отключения: {ex.Message}");
+            }
+            finally
+            {
+                _stream = null;
+                _tcpClient = null;
             }
         }
 
-        private async void SendMessage()
+        private async Task ListenToServer(CancellationToken cancellationToken)
         {
-            if (!_isConnected || _stream == null)
-            {
-                AddLog("Нет подключения к серверу");
-                return;
-            }
-
-            string message = MessageTextBox.Text;
-            if (string.IsNullOrWhiteSpace(message))
-                return;
-
             try
             {
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                await _stream.WriteAsync(data, 0, data.Length);
+                byte[] buffer = new byte[1024];
 
-                AddLog($"Отправлено: {message}");
-                MessageTextBox.Text = ""; // Очищаем поле
-            }
-            catch (Exception ex)
-            {
-                AddLog($"Ошибка отправки: {ex.Message}");
-                DisconnectFromServer();
-            }
-        }
-
-        private async Task ReceiveMessages()
-        {
-            byte[] buffer = new byte[1024];
-
-            while (_isConnected && _client != null && _client.Connected)
-            {
-                try
+                while (_isConnected && _tcpClient?.Connected == true)
                 {
-                    int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length);
-                    if (bytesRead == 0)
+                    // Используем CancellationToken для корректного прерывания
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        // Сервер отключился
-                        Dispatcher.Invoke(() =>
-                        {
-                            AddLog("Сервер отключился");
-                            DisconnectFromServer();
-                        });
                         break;
                     }
 
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    try
+                    {
+                        // Асинхронное чтение с таймаутом
+                        var readTask = _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
 
-                    Dispatcher.Invoke(() =>
+                        // Ждем с таймаутом, чтобы не зависнуть
+                        if (await Task.WhenAny(readTask, Task.Delay(1000, cancellationToken)) == readTask)
+                        {
+                            int bytesRead = await readTask;
+                            if (bytesRead == 0) break;
+
+                            string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+                            Dispatcher.Invoke(() =>
+                            {
+                                AddMessage($"Сервер: {message}");
+                            });
+                        }
+                    }
+                    catch (OperationCanceledException)
                     {
-                        AddLog($"Получено: {message}");
-                    });
+                        // Задача отменена - нормальный выход
+                        break;
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is ObjectDisposedException)
+                    {
+                        // Соединение закрыто
+                        break;
+                    }
                 }
-                catch (Exception)
+            }
+            catch (Exception ex)
+            {
+                if (!cancellationToken.IsCancellationRequested)
                 {
-                    // Ошибка чтения - вероятно, соединение разорвано
                     Dispatcher.Invoke(() =>
                     {
-                        AddLog("Ошибка соединения");
-                        DisconnectFromServer();
+                        AddMessage($"Ошибка соединения: {ex.Message}");
+                        Disconnect();
                     });
-                    break;
                 }
             }
         }
 
-        private void UpdateStatus(string status)
+        private void AddMessage(string message)
         {
-            Dispatcher.Invoke(() =>
-            {
-                StatusText.Text = status;
-            });
+            string timestamp = DateTime.Now.ToString("HH:mm:ss");
+            MessageTextBlock.Text += $"[{timestamp}] {message}\n";
+
+            // Прокручиваем вниз
+            var scrollViewer = GetChildOfType<ScrollViewer>(MessageTextBlock.Parent as DependencyObject);
+            scrollViewer?.ScrollToEnd();
         }
 
-        private void AddLog(string message)
+        private T GetChildOfType<T>(DependencyObject depObj) where T : DependencyObject
         {
-            Dispatcher.Invoke(() =>
+            if (depObj == null) return null;
+
+            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj); i++)
             {
-                string timestamp = DateTime.Now.ToString("HH:mm:ss");
-                LogTextBox.Text += $"[{timestamp}] {message}\n";
-                LogTextBox.ScrollToEnd();
-            });
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
+
+                var result = (child as T) ?? GetChildOfType<T>(child);
+                if (result != null) return result;
+            }
+
+            return null;
+        }
+
+        private void UpdateUI()
+        {
+            ConnectButton.IsEnabled = !_isConnected;
+            SendButton.IsEnabled = _isConnected;
+            DisconnectButton.IsEnabled = _isConnected;
+            ServerAddressTextBox.IsEnabled = !_isConnected;
+            PortTextBox.IsEnabled = !_isConnected;
+            MessageTextBox.IsEnabled = _isConnected;
+
+            StatusText.Text = _isConnected ? "Подключено" : "Не подключено";
+            StatusText.Foreground = _isConnected ?
+                System.Windows.Media.Brushes.LightGreen :
+                System.Windows.Media.Brushes.LightCoral;
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
-            DisconnectFromServer();
+            Disconnect();
             base.OnClosing(e);
         }
     }
