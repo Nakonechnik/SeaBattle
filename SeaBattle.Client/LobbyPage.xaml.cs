@@ -151,7 +151,6 @@ namespace SeaBattle.Client
                     var gameData = msg.Data.ToObject<GameStartData>();
                     RoomStatusText.Text = "Игра начинается!";
 
-                    // ИСПРАВЛЕНИЕ: Используем Window.Content вместо NavigationService
                     Dispatcher.InvokeAsync(() =>
                     {
                         _currentRoomId = null;
@@ -218,6 +217,16 @@ namespace SeaBattle.Client
             }
 
             ConnectionStatusText.Text = $"Моих: {_myRooms.Count}, Доступно: {_availableRooms.Count}";
+
+            // Проверяем, есть ли у нас своя комната
+            if (_myRooms.Count == 0)
+            {
+                // Если нет своих комнат, сбрасываем состояние
+                _currentRoomId = null;
+                CreateRoomButton.IsEnabled = true;
+                DeleteRoomButton.IsEnabled = false;
+                RoomStatusText.Text = "Не в комнате";
+            }
         }
 
         private async Task SendMessage(NetworkMessage msg)
@@ -248,6 +257,14 @@ namespace SeaBattle.Client
             {
                 MessageBox.Show("Введите название комнаты", "Ошибка",
                     MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // Проверяем, есть ли уже своя комната
+            if (_myRooms.Count > 0)
+            {
+                MessageBox.Show("У вас уже есть своя комната. Можно создать только одну.", "Информация",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
