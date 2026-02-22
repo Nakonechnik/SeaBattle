@@ -1,380 +1,415 @@
 ﻿using System;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Net.Sockets;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Newtonsoft.Json.Linq;
 using SeaBattle.Shared.Models;
 
 namespace SeaBattle.Client
 {
+    public class ClientRoomInfo
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string CreatorId { get; set; }
+        public string CreatorName { get; set; }
+        public int PlayerCount { get; set; }
+        public string Status { get; set; }
+        public bool IsMyRoom
+        {
+            get { return CreatorId == App.PlayerId; }
+        }
+
+        public Brush StatusColor
+        {
+            get
+            {
+                if (Status == "Waiting")
+                    return Brushes.Orange;
+                else if (Status == "Full")
+                    return Brushes.LightGreen;
+                else if (Status == "InGame")
+                    return Brushes.Red;
+                else
+                    return Brushes.Gray;
+            }
+        }
+    }
+
     public partial class LobbyPage : Page
     {
-        private MainWindow _mainWindow;
-        private TcpClient _tcpClient;
-        private NetworkStream _stream;
-        private string _playerId;
-        private string _playerName;
-        private bool _isConnected;
-        private CancellationTokenSource _cancellationTokenSource;
-        private ObservableCollection<RoomInfo> _rooms = new ObservableCollection<RoomInfo>();
+        private ObservableCollection<ClientRoomInfo> _myRooms = new ObservableCollection<ClientRoomInfo>();
+        private ObservableCollection<ClientRoomInfo> _availableRooms = new ObservableCollection<ClientRoomInfo>();
         private string _currentRoomId;
+        private bool _isReading = false;
 
-        public LobbyPage(MainWindow mainWindow)
+        public LobbyPage()
         {
             InitializeComponent();
 
-            _mainWindow = mainWindow;
-            _tcpClient = mainWindow.TcpClient;
-            _stream = mainWindow.Stream;
-            _playerId = mainWindow.PlayerId;
-            _playerName = mainWindow.PlayerName;
-            _isConnected = true;
-            _cancellationTokenSource = new CancellationTokenSource();
+            MyRoomsListBox.ItemsSource = _myRooms;
+            AvailableRoomsListBox.ItemsSource = _availableRooms;
+            PlayerNameText.Text = App.PlayerName;
 
-            PlayerNameText.Text = _playerName;
-            RoomsListBox.ItemsSource = _rooms;
-
-            // Запускаем прослушивание
-            Task.Run(() => ListenToServer(_cancellationTokenSource.Token));
+            // Запускаем чтение сообщений (только один раз)
+            if (!_isReading)
+            {
+                _isReading = true;
+                Task.Run((Func<Task>)ReadLoop);
+            }
 
             // Запрашиваем список комнат
-            _ = RequestRoomsList();
+            Task.Delay(500).ContinueWith(_ =>
+            {
+                Dispatcher.InvokeAsync(() => GetRooms());
+            });
         }
 
-        private async Task ListenToServer(CancellationToken cancellationToken)
+        private async Task ReadLoop()
         {
             try
             {
-                byte[] buffer = new byte[4096];
-
-                while (_isConnected && _tcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
+                while (!App.Cts.Token.IsCancellationRequested && App.TcpClient.Connected)
                 {
-                    try
+                    if (App.Stream.DataAvailable)
                     {
-                        byte[] lengthBytes = new byte[4];
-                        int lengthBytesRead = await _stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
-                        if (lengthBytesRead < 4) break;
+                        // Читаем длину
+                        byte[] lenBytes = new byte[4];
+                        int read = await App.Stream.ReadAsync(lenBytes, 0, 4);
+                        if (read < 4) continue;
 
-                        int messageLength = BitConverter.ToInt32(lengthBytes, 0);
-                        byte[] messageBytes = new byte[messageLength];
-                        int totalBytesRead = 0;
+                        int msgLen = BitConverter.ToInt32(lenBytes, 0);
+                        if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) continue;
 
-                        while (totalBytesRead < messageLength)
+                        // Читаем тело
+                        byte[] msgData = new byte[msgLen];
+                        int totalRead = 0;
+                        while (totalRead < msgLen)
                         {
-                            int bytesRead = await _stream.ReadAsync(messageBytes, totalBytesRead,
-                                messageLength - totalBytesRead, cancellationToken);
-                            if (bytesRead == 0) break;
-                            totalBytesRead += bytesRead;
+                            int r = await App.Stream.ReadAsync(msgData, totalRead, msgLen - totalRead);
+                            if (r == 0) break;
+                            totalRead += r;
                         }
 
-                        string json = Encoding.UTF8.GetString(messageBytes, 0, totalBytesRead);
+                        string json = Encoding.UTF8.GetString(msgData);
                         var message = NetworkMessage.FromJson(json);
 
-                        await Dispatcher.InvokeAsync(() => ProcessServerMessage(message));
+                        if (message != null)
+                        {
+                            var msg = message;
+                            await Dispatcher.InvokeAsync(() => HandleMessage(msg));
+                        }
                     }
-                    catch (OperationCanceledException)
+                    else
                     {
-                        break;
-                    }
-                    catch (Exception ex) when (ex is System.IO.IOException || ex is ObjectDisposedException)
-                    {
-                        break;
+                        await Task.Delay(10);
                     }
                 }
             }
             catch (Exception ex)
             {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MessageBox.Show($"Ошибка соединения: {ex.Message}", "Ошибка",
-                                      MessageBoxButton.OK, MessageBoxImage.Error);
-                    });
-                }
+                Console.WriteLine($"ReadLoop error: {ex.Message}");
             }
         }
 
-        private void ProcessServerMessage(NetworkMessage message)
+        private void HandleMessage(NetworkMessage msg)
+        {
+            switch (msg.Type)
+            {
+                case MessageType.RoomsList:
+                    UpdateRoomsList(msg.Data["rooms"] as JArray);
+                    break;
+
+                case MessageType.RoomCreated:
+                    var newRoomId = msg.Data["RoomId"]?.ToString() ?? msg.Data["roomId"]?.ToString();
+                    var newRoomName = msg.Data["RoomName"]?.ToString() ?? msg.Data["roomName"]?.ToString();
+                    _currentRoomId = newRoomId;
+                    RoomStatusText.Text = $"Вы создали комнату: {newRoomName}";
+                    CreateRoomButton.IsEnabled = false;
+                    DeleteRoomButton.IsEnabled = true;
+                    _ = GetRooms();
+                    break;
+
+                case MessageType.JoinedRoom:
+                    var roomId = msg.Data["RoomId"]?.ToString() ?? msg.Data["roomId"]?.ToString();
+                    var roomName = msg.Data["RoomName"]?.ToString() ?? msg.Data["roomName"]?.ToString();
+                    _currentRoomId = roomId;
+                    RoomStatusText.Text = $"Вы в комнате: {roomName}";
+                    CreateRoomButton.IsEnabled = false;
+
+                    var myRoom = _myRooms.FirstOrDefault(r => r.Id == roomId);
+                    DeleteRoomButton.IsEnabled = myRoom != null && myRoom.IsMyRoom;
+
+                    _ = GetRooms();
+                    break;
+
+                case MessageType.StartGame:
+                    var gameData = msg.Data.ToObject<GameStartData>();
+                    RoomStatusText.Text = "Игра начинается!";
+
+                    // ИСПРАВЛЕНИЕ: Используем Window.Content вместо NavigationService
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        _currentRoomId = null;
+                        CreateRoomButton.IsEnabled = true;
+                        DeleteRoomButton.IsEnabled = false;
+
+                        var gamePage = new GamePage(gameData.RoomId);
+                        var window = Window.GetWindow(this);
+                        if (window is MainWindow mainWindow)
+                        {
+                            mainWindow.Content = gamePage;
+                        }
+                    });
+                    break;
+
+                case MessageType.PlayerJoinedRoom:
+                    var playerName = msg.Data["PlayerName"]?.ToString() ?? "Игрок";
+                    RoomStatusText.Text = $"{playerName} присоединился!";
+                    _ = GetRooms();
+                    break;
+
+                case MessageType.PlayerLeftRoom:
+                    RoomStatusText.Text = "Игрок покинул комнату";
+                    _currentRoomId = null;
+                    CreateRoomButton.IsEnabled = true;
+                    DeleteRoomButton.IsEnabled = false;
+                    _ = GetRooms();
+                    break;
+            }
+        }
+
+        private void UpdateRoomsList(JArray rooms)
+        {
+            _myRooms.Clear();
+            _availableRooms.Clear();
+
+            if (rooms == null) return;
+
+            foreach (var room in rooms)
+            {
+                var info = new ClientRoomInfo
+                {
+                    Id = room["id"]?.ToString() ?? room["Id"]?.ToString(),
+                    Name = room["name"]?.ToString() ?? room["Name"]?.ToString() ?? "Без имени",
+                    CreatorId = room["creatorId"]?.ToString() ?? room["CreatorId"]?.ToString(),
+                    CreatorName = room["creatorName"]?.ToString() ?? room["CreatorName"]?.ToString() ?? "Неизвестно",
+                    PlayerCount = room["playerCount"]?.Value<int>() ?? room["PlayerCount"]?.Value<int>() ?? 0,
+                    Status = room["status"]?.ToString() ?? room["Status"]?.ToString() ?? "Waiting"
+                };
+
+                if (info.IsMyRoom)
+                {
+                    _myRooms.Add(info);
+                    // Если это моя комната и я в ней, активируем кнопку удаления
+                    if (info.Id == _currentRoomId)
+                    {
+                        DeleteRoomButton.IsEnabled = true;
+                    }
+                }
+                else if (info.PlayerCount < 2 && info.Status != "InGame")
+                {
+                    _availableRooms.Add(info);
+                }
+            }
+
+            ConnectionStatusText.Text = $"Моих: {_myRooms.Count}, Доступно: {_availableRooms.Count}";
+        }
+
+        private async Task SendMessage(NetworkMessage msg)
         {
             try
             {
-                switch (message.Type)
-                {
-                    case MessageType.RoomCreated:
-                        HandleRoomCreated(message);
-                        break;
+                string json = msg.ToJson();
+                byte[] data = Encoding.UTF8.GetBytes(json);
+                byte[] len = BitConverter.GetBytes(data.Length);
 
-                    case MessageType.JoinedRoom:
-                        HandleJoinedRoom(message);
-                        break;
-
-                    case MessageType.RoomsList:
-                        HandleRoomsList(message);
-                        break;
-
-                    case MessageType.StartGame:
-                        HandleStartGame(message);
-                        break;
-
-                    case MessageType.Error:
-                        MessageBox.Show($"Ошибка: {message.Data?["Message"]}", "Ошибка",
-                                      MessageBoxButton.OK, MessageBoxImage.Error);
-                        break;
-                }
+                await App.Stream.WriteAsync(len, 0, 4);
+                await App.Stream.WriteAsync(data, 0, data.Length);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
+                Console.WriteLine($"Send error: {ex.Message}");
             }
         }
 
-        private void HandleRoomCreated(NetworkMessage message)
+        private async Task GetRooms()
         {
-            var roomId = message.Data?["RoomId"]?.ToString();
-            var roomName = message.Data?["RoomName"]?.ToString();
-
-            _currentRoomId = roomId;
-            RoomStatusText.Text = $"Вы создали комнату: {roomName}";
-
-            CreateRoomButton.IsEnabled = false;
-            LeaveRoomButton.IsEnabled = true;
-            StartGameButton.IsEnabled = true;
-
-            _ = RequestRoomsList();
-        }
-
-        private void HandleJoinedRoom(NetworkMessage message)
-        {
-            var roomId = message.Data?["RoomId"]?.ToString();
-            var roomName = message.Data?["RoomName"]?.ToString();
-
-            _currentRoomId = roomId;
-            RoomStatusText.Text = $"Вы в комнате: {roomName}";
-
-            CreateRoomButton.IsEnabled = false;
-            LeaveRoomButton.IsEnabled = true;
-            StartGameButton.IsEnabled = true;
-
-            _ = RequestRoomsList();
-        }
-
-        private void HandleRoomsList(NetworkMessage message)
-        {
-            _rooms.Clear();
-
-            var rooms = message.Data?["Rooms"];
-            if (rooms != null)
-            {
-                foreach (var room in rooms)
-                {
-                    _rooms.Add(new RoomInfo
-                    {
-                        Id = room["Id"]?.ToString(),
-                        Name = room["Name"]?.ToString(),
-                        CreatorName = room["CreatorName"]?.ToString(),
-                        PlayerCount = Convert.ToInt32(room["PlayerCount"]),
-                        Status = room["Status"]?.ToString()
-                    });
-                }
-            }
-        }
-
-        private void HandleStartGame(NetworkMessage message)
-        {
-            var gameData = message.Data.ToObject<GameStartData>();
-
-            RoomStatusText.Text = "Игра началась!";
-            StartGameButton.IsEnabled = false;
-
-            // Переходим на страницу игры
-            var gamePage = new GamePage(_tcpClient, _stream, _playerId, _playerName, gameData.RoomId);
-            var mainWindow = (MainWindow)Window.GetWindow(this);
-            mainWindow.Content = gamePage;
+            await SendMessage(new NetworkMessage { Type = MessageType.GetRooms, SenderId = App.PlayerId });
         }
 
         private async void CreateRoomButton_Click(object sender, RoutedEventArgs e)
         {
-            string roomName = RoomNameTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(roomName))
+            if (string.IsNullOrWhiteSpace(RoomNameTextBox.Text))
             {
-                MessageBox.Show("Введите название комнаты", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Введите название комнаты", "Ошибка",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            try
+            if (!string.IsNullOrEmpty(_currentRoomId))
             {
-                var message = new NetworkMessage
-                {
-                    Type = MessageType.CreateRoom,
-                    SenderId = _playerId,
-                    Data = JObject.FromObject(new CreateRoomData
-                    {
-                        RoomName = roomName
-                    })
-                };
-
-                await SendMessageAsync(message);
+                MessageBox.Show("Вы уже находитесь в комнате", "Информация",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
-            catch (Exception ex)
+
+            await SendMessage(new NetworkMessage
             {
-                MessageBox.Show($"Ошибка создания комнаты: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
+                Type = MessageType.CreateRoom,
+                SenderId = App.PlayerId,
+                Data = JObject.FromObject(new { roomName = RoomNameTextBox.Text.Trim() })
+            });
+
+            RoomStatusText.Text = "Создание комнаты...";
+        }
+
+        private async void JoinRoom(string roomId)
+        {
+            if (!string.IsNullOrEmpty(_currentRoomId))
+            {
+                MessageBox.Show("Вы уже находитесь в комнате", "Информация",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            await SendMessage(new NetworkMessage
+            {
+                Type = MessageType.JoinRoom,
+                SenderId = App.PlayerId,
+                Data = JObject.FromObject(new { roomId })
+            });
+        }
+
+        private async void DeleteRoomButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentRoomId))
+            {
+                MessageBox.Show("Вы не в комнате", "Информация",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            // Проверяем, что это действительно наша комната
+            var myRoom = _myRooms.FirstOrDefault(r => r.Id == _currentRoomId);
+            if (myRoom == null || !myRoom.IsMyRoom)
+            {
+                MessageBox.Show("Вы можете удалить только свою комнату", "Ошибка",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (MessageBox.Show($"Удалить комнату '{myRoom.Name}'?", "Подтверждение",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                await SendMessage(new NetworkMessage
+                {
+                    Type = MessageType.LeaveRoom,
+                    SenderId = App.PlayerId
+                });
+
+                // Сбрасываем состояние
+                _currentRoomId = null;
+                CreateRoomButton.IsEnabled = true;
+                DeleteRoomButton.IsEnabled = false;
+                RoomStatusText.Text = "Не в комнате";
+
+                // Обновляем список
+                await GetRooms();
             }
         }
 
         private async void RefreshRoomsButton_Click(object sender, RoutedEventArgs e)
         {
-            await RequestRoomsList();
+            await GetRooms();
         }
 
-        private async void LeaveRoomButton_Click(object sender, RoutedEventArgs e)
+        private void AvailableRoomsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            try
+            if (AvailableRoomsListBox.SelectedItem is ClientRoomInfo room)
             {
-                var message = new NetworkMessage
+                if (string.IsNullOrEmpty(_currentRoomId))
                 {
-                    Type = MessageType.LeaveRoom,
-                    SenderId = _playerId
-                };
-
-                await SendMessageAsync(message);
-
-                _currentRoomId = null;
-                RoomStatusText.Text = "Не в комнате";
-
-                CreateRoomButton.IsEnabled = true;
-                LeaveRoomButton.IsEnabled = false;
-                StartGameButton.IsEnabled = false;
-
-                _ = RequestRoomsList();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка выхода из комнаты: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private async void StartGameButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_currentRoomId))
-            {
-                MessageBox.Show("Вы не в комнате", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
-            try
-            {
-                var message = new NetworkMessage
-                {
-                    Type = MessageType.StartGame,
-                    SenderId = _playerId,
-                    Data = JObject.FromObject(new JoinRoomData
+                    if (room.PlayerCount < 2 && room.Status != "InGame")
                     {
-                        RoomId = _currentRoomId
-                    })
-                };
-
-                await SendMessageAsync(message);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка начала игры: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private void RoomsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (RoomsListBox.SelectedItem is RoomInfo selectedRoom)
-            {
-                JoinRoom(selectedRoom.Id);
-            }
-        }
-
-        private async void JoinRoom(string roomId)
-        {
-            try
-            {
-                var message = new NetworkMessage
-                {
-                    Type = MessageType.JoinRoom,
-                    SenderId = _playerId,
-                    Data = JObject.FromObject(new JoinRoomData
+                        if (MessageBox.Show($"Присоединиться к комнате '{room.Name}'?", "Подтверждение",
+                            MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                        {
+                            JoinRoom(room.Id);
+                        }
+                    }
+                    else
                     {
-                        RoomId = roomId
-                    })
-                };
-
-                await SendMessageAsync(message);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка присоединения к комнате: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private async Task RequestRoomsList()
-        {
-            try
-            {
-                var message = new NetworkMessage
+                        MessageBox.Show("Эта комната недоступна", "Информация",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                }
+                else
                 {
-                    Type = MessageType.GetRooms,
-                    SenderId = _playerId
-                };
-
-                await SendMessageAsync(message);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка запроса списка комнат: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Вы уже находитесь в комнате", "Информация",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                AvailableRoomsListBox.SelectedItem = null;
             }
         }
 
-        private async Task SendMessageAsync(NetworkMessage message)
+        private void MyRoomsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (!_isConnected || _stream == null)
-                throw new InvalidOperationException("Не подключено к серверу");
+            if (MyRoomsListBox.SelectedItem is ClientRoomInfo room)
+            {
+                if (string.IsNullOrEmpty(_currentRoomId))
+                {
+                    // Если не в комнате, можно войти в свою комнату
+                    if (room.Status != "InGame")
+                    {
+                        if (MessageBox.Show($"Войти в свою комнату '{room.Name}'?", "Подтверждение",
+                            MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                        {
+                            JoinRoom(room.Id);
+                        }
+                    }
+                }
+                else if (room.Id == _currentRoomId && room.IsMyRoom)
+                {
+                    // Если это текущая комната и она моя, активируем кнопку удаления
+                    DeleteRoomButton.IsEnabled = true;
+                }
 
-            string json = message.ToJson();
-            byte[] data = Encoding.UTF8.GetBytes(json);
-            byte[] length = BitConverter.GetBytes(data.Length);
+                MyRoomsListBox.SelectedItem = null;
+            }
+        }
 
-            await _stream.WriteAsync(length, 0, 4);
-            await _stream.WriteAsync(data, 0, data.Length);
-            await _stream.FlushAsync();
+        private void DiagnosticButton_Click(object sender, RoutedEventArgs e)
+        {
+            string info = $"ID: {App.PlayerId}\n" +
+                         $"Комнат моих: {_myRooms.Count}\n" +
+                         $"Доступно: {_availableRooms.Count}\n" +
+                         $"Connected: {App.TcpClient?.Connected}\n" +
+                         $"CurrentRoom: {_currentRoomId ?? "none"}\n" +
+                         $"CreateBtn: {CreateRoomButton.IsEnabled}\n" +
+                         $"DeleteBtn: {DeleteRoomButton.IsEnabled}";
+            MessageBox.Show(info, "Диагностика");
         }
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            // Возвращаемся в главное окно, НО НЕ ОТКЛЮЧАЕМСЯ
-            var mainWindow = new MainWindow();
-            var currentWindow = (MainWindow)Window.GetWindow(this);
-            currentWindow.Content = mainWindow.Content;
+            App.Cts.Cancel();
+            App.Stream?.Close();
+            App.TcpClient?.Close();
+
+            var newMainWindow = new MainWindow();
+            Application.Current.MainWindow = newMainWindow;
+            newMainWindow.Show();
+            Window.GetWindow(this)?.Close();
         }
 
         private void Page_Unloaded(object sender, RoutedEventArgs e)
         {
-            // НЕ ОТКЛЮЧАЕМСЯ!
+            // Не отменяем токен здесь
         }
-    }
-
-    public class RoomInfo
-    {
-        public string Id { get; set; }
-        public string Name { get; set; }
-        public string CreatorName { get; set; }
-        public int PlayerCount { get; set; }
-        public string Status { get; set; }
     }
 }

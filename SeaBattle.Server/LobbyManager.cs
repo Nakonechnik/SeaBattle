@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using SeaBattle.Shared.Models;
 using SeaBattle.Server.Models;
 
@@ -12,14 +11,26 @@ namespace SeaBattle.Server
     {
         private readonly ConcurrentDictionary<string, GameRoom> _rooms = new ConcurrentDictionary<string, GameRoom>();
         private readonly ConcurrentDictionary<string, ConnectedPlayer> _players;
+        private GameServer _gameServer;
 
         public LobbyManager(ConcurrentDictionary<string, ConnectedPlayer> players)
         {
             _players = players;
         }
 
+        public void SetGameServer(GameServer gameServer)
+        {
+            _gameServer = gameServer;
+        }
+
         public GameRoom CreateRoom(string roomName, ConnectedPlayer creator)
         {
+            var existingRoom = GetPlayerRoom(creator.Id);
+            if (existingRoom != null)
+            {
+                return existingRoom;
+            }
+
             var room = new GameRoom
             {
                 Name = string.IsNullOrEmpty(roomName) ? $"Комната {_rooms.Count + 1}" : roomName,
@@ -27,8 +38,6 @@ namespace SeaBattle.Server
             };
 
             _rooms[room.Id] = room;
-
-            // Обновляем статус игрока
             creator.Status = PlayerStatus.InRoom;
 
             Console.WriteLine($"Создана комната: {room.Name} (ID: {room.Id}) создателем {creator.Name}");
@@ -48,12 +57,18 @@ namespace SeaBattle.Server
                 return false;
             }
 
+            if (room.Creator?.Id == player.Id)
+            {
+                return false;
+            }
+
             try
             {
                 room.AddPlayer(player);
                 player.Status = PlayerStatus.InRoom;
 
                 Console.WriteLine($"Игрок {player.Name} присоединился к комнате {room.Name}");
+
                 return true;
             }
             catch
@@ -69,6 +84,8 @@ namespace SeaBattle.Server
                 if (room.ContainsPlayer(playerId))
                 {
                     bool wasCreator = (room.Creator?.Id == playerId);
+                    bool wasPlayer2 = (room.Player2?.Id == playerId);
+
                     room.RemovePlayer(playerId);
 
                     if (_players.TryGetValue(playerId, out var player))
@@ -78,13 +95,11 @@ namespace SeaBattle.Server
 
                     Console.WriteLine($"Игрок {playerId} покинул комнату {room.Name}");
 
-                    // Если комната пустая - удаляем
                     if (room.IsEmpty)
                     {
                         _rooms.TryRemove(room.Id, out _);
                         Console.WriteLine($"Комната {room.Name} удалена (пустая)");
                     }
-                    // Если создатель покинул комнату, но есть второй игрок - передаем права
                     else if (wasCreator && room.Player2 != null)
                     {
                         room.Creator = room.Player2;
@@ -98,22 +113,38 @@ namespace SeaBattle.Server
             }
         }
 
-        public List<RoomInfo> GetAvailableRooms()
+        public List<ClientRoomInfo> GetRoomsForPlayer(string playerId)
         {
-            return _rooms.Values
-                .Where(r => r.Status == GameRoomStatus.Waiting)
-                .Select(r => new RoomInfo
+            Console.WriteLine($"GetRoomsForPlayer для игрока {playerId}, всего комнат: {_rooms.Count}");
+
+            var allRooms = _rooms.Values
+                .Where(r => r.Status == GameRoomStatus.Waiting || r.Status == GameRoomStatus.Full || r.Status == GameRoomStatus.InGame)
+                .Select(r => new ClientRoomInfo
                 {
                     Id = r.Id,
                     Name = r.Name,
+                    CreatorId = r.Creator?.Id,
                     CreatorName = r.Creator?.Name ?? "Неизвестно",
                     PlayerCount = (r.Creator != null ? 1 : 0) + (r.Player2 != null ? 1 : 0),
                     Status = r.Status.ToString(),
-                    CreatedAt = r.CreatedAt
+                    CreatedAt = r.CreatedAt,
+                    IsMyRoom = r.Creator?.Id == playerId || r.Player2?.Id == playerId
                 })
+                .OrderByDescending(r => r.CreatedAt)
                 .ToList();
+
+            foreach (var room in allRooms)
+            {
+                Console.WriteLine($"  - Комната: {room.Name}, ID: {room.Id}, IsMyRoom: {room.IsMyRoom}");
+            }
+
+            return allRooms;
         }
 
+        public List<GameRoom> GetAllRooms()
+        {
+            return _rooms.Values.ToList();
+        }
         public GameRoom GetPlayerRoom(string playerId)
         {
             return _rooms.Values.FirstOrDefault(r => r.ContainsPlayer(playerId));
@@ -145,7 +176,39 @@ namespace SeaBattle.Server
             }
 
             Console.WriteLine($"Игра началась в комнате {room.Name}");
+
             return true;
         }
+
+        public void RemoveRoom(string roomId)
+        {
+            if (_rooms.TryGetValue(roomId, out var room))
+            {
+                if (room.Creator != null && _players.TryGetValue(room.Creator.Id, out var creator))
+                {
+                    creator.Status = PlayerStatus.Online;
+                }
+                if (room.Player2 != null && _players.TryGetValue(room.Player2.Id, out var player2))
+                {
+                    player2.Status = PlayerStatus.Online;
+                }
+
+                _rooms.TryRemove(roomId, out _);
+                Console.WriteLine($"Комната {room.Name} удалена");
+            }
+        }
+    }
+
+    // Временный класс для клиента
+    public class ClientRoomInfo
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string CreatorId { get; set; }
+        public string CreatorName { get; set; }
+        public int PlayerCount { get; set; }
+        public string Status { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsMyRoom { get; set; }
     }
 }

@@ -1,10 +1,10 @@
 ﻿<Page x:Class="SeaBattle.Client.LobbyPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-      xmlns:local="clr-namespace:SeaBattle.Client"
       Title="Игровое лобби"
       Background="#1E1E1E"
-      Width="900" Height="600">
+      Width="900" Height="600"
+      Unloaded="Page_Unloaded">
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -40,19 +40,112 @@
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Левая панель - управление -->
+            <!-- Левая панель - Мои комнаты -->
             <Border Grid.Column="0" 
+        Background="#2D2D30" 
+        CornerRadius="5" 
+        Padding="15"
+        Margin="0,0,5,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                  Text="МОИ КОМНАТЫ"
+                  Foreground="#007ACC"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Margin="0,0,0,15"/>
+
+                    <ListBox x:Name="MyRoomsListBox"
+                Background="Transparent"
+                BorderThickness="0"
+                Foreground="White"
+                SelectionChanged="MyRoomsListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#3D3D40" 
+                            CornerRadius="3" 
+                            Margin="0,0,0,5" 
+                            Padding="10">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <TextBlock Text="{Binding Name}" 
+                                          FontWeight="Bold"
+                                          FontSize="14"
+                                          Foreground="White"
+                                          DockPanel.Dock="Left"/>
+                                            <TextBlock Text="{Binding PlayerCount, StringFormat={}{0}/2}"
+                                          FontSize="12"
+                                          Foreground="#AAAAAA"
+                                          HorizontalAlignment="Right"/>
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding Status}"
+                                      FontSize="11"
+                                      Foreground="{Binding StatusColor}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <!-- Центральная панель - Доступные комнаты -->
+            <Border Grid.Column="1" 
+        Background="#2D2D30" 
+        CornerRadius="5" 
+        Padding="15"
+        Margin="5,0,5,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                  Text="ДОСТУПНЫЕ КОМНАТЫ"
+                  Foreground="White"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Margin="0,0,0,15"/>
+
+                    <ListBox x:Name="AvailableRoomsListBox"
+                Background="Transparent"
+                BorderThickness="0"
+                Foreground="White"
+                SelectionChanged="AvailableRoomsListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#3D3D40" 
+                            CornerRadius="3" 
+                            Margin="0,0,0,5" 
+                            Padding="10">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" 
+                                      FontWeight="Bold"
+                                      FontSize="14"
+                                      Foreground="White"/>
+                                        <TextBlock Text="{Binding CreatorName}"
+                                      FontSize="12"
+                                      Foreground="#AAAAAA"/>
+                                        <TextBlock Text="{Binding PlayerCount, StringFormat={}{0}/2}"
+                                      FontSize="12"
+                                      Foreground="#AAAAAA"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+            <!-- Правая панель - Управление -->
+            <Border Grid.Column="2" 
                     Background="#2D2D30" 
                     CornerRadius="5" 
                     Padding="15"
-                    Margin="0,0,10,0">
+                    Width="200"
+                    Margin="5,0,0,0">
                 <StackPanel>
                     <TextBlock Text="Управление"
                               Foreground="White"
-                              FontSize="18"
+                              FontSize="16"
                               FontWeight="Bold"
                               Margin="0,0,0,20"/>
 
@@ -70,26 +163,19 @@
                            Height="35"
                            Margin="0,0,0,10"/>
 
+                    <Button x:Name="DeleteRoomButton"
+                           Content="Удалить комнату"
+                           Click="DeleteRoomButton_Click"
+                           Height="35"
+                           Margin="0,0,0,10"
+                           Background="#E74C3C"
+                           IsEnabled="False"/>
+
                     <Button x:Name="RefreshRoomsButton"
                            Content="Обновить список"
                            Click="RefreshRoomsButton_Click"
                            Height="35"
                            Margin="0,0,0,10"/>
-
-                    <Button x:Name="LeaveRoomButton"
-                           Content="Покинуть комнату"
-                           Click="LeaveRoomButton_Click"
-                           Height="35"
-                           Margin="0,0,0,10"
-                           IsEnabled="False"/>
-
-                    <Button x:Name="StartGameButton"
-                           Content="Начать игру"
-                           Click="StartGameButton_Click"
-                           Height="35"
-                           Margin="0,0,0,20"
-                           IsEnabled="False"
-                           Background="#27AE60"/>
 
                     <Button x:Name="BackButton"
                            Content="Назад"
@@ -97,9 +183,17 @@
                            Height="35"
                            Margin="0,0,0,10"/>
 
+                    <Button x:Name="DiagnosticButton" 
+                           Content="Диагностика" 
+                           Click="DiagnosticButton_Click"
+                           Height="35"
+                           Margin="0,0,0,10"
+                           Background="#3498DB"/>
+                    
                     <Border Background="#3D3D40" 
                            CornerRadius="3" 
-                           Padding="10">
+                           Padding="10"
+                           Margin="0,10,0,0">
                         <TextBlock x:Name="RoomStatusText"
                                   Text="Не в комнате"
                                   Foreground="LightBlue"
@@ -107,57 +201,14 @@
                     </Border>
                 </StackPanel>
             </Border>
-
-            <!-- Правая панель - список комнат -->
-            <Border Grid.Column="1" 
-                    Background="#2D2D30" 
-                    CornerRadius="5" 
-                    Padding="15">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top"
-                              Text="Доступные комнаты"
-                              Foreground="White"
-                              FontSize="16"
-                              FontWeight="Bold"
-                              Margin="0,0,0,15"/>
-
-                    <ListBox x:Name="RoomsListBox"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Foreground="White"
-                            SelectionChanged="RoomsListBox_SelectionChanged">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="#3D3D40" 
-                                        CornerRadius="3" 
-                                        Margin="0,0,0,5" 
-                                        Padding="10">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Name}" 
-                                                  FontWeight="Bold"
-                                                  FontSize="14"
-                                                  Foreground="White"/>
-                                        <TextBlock Text="{Binding CreatorName}"
-                                                  FontSize="12"
-                                                  Foreground="#AAAAAA"/>
-                                        <TextBlock Text="{Binding PlayerCount, StringFormat='Игроков: {0}/2'}"
-                                                  FontSize="12"
-                                                  Foreground="#AAAAAA"/>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </DockPanel>
-            </Border>
         </Grid>
 
         <!-- Статус бар -->
         <StatusBar Grid.Row="2" Background="#252526" Margin="0,20,0,0">
             <StatusBarItem>
                 <TextBlock x:Name="ConnectionStatusText" 
-                          Text="Подключено" 
-                          Foreground="LightGreen"/>
+                  Text="Подключено | Комнат: 0" 
+                  Foreground="LightGreen"/>
             </StatusBarItem>
         </StatusBar>
     </Grid>

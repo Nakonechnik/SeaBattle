@@ -403,6 +403,14 @@ namespace SeaBattle.Shared.Models
         private int _y;
         private bool _isGameOver;
         private string _winnerId;
+        private string _attackerId;
+
+        [JsonProperty("attackerId")]
+        public string AttackerId
+        {
+            get { return _attackerId; }
+            set { _attackerId = value; }
+        }
 
         [JsonProperty("isValid")]
         public bool IsValid

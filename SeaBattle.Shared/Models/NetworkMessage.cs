@@ -1,10 +1,20 @@
 ﻿using System;
-using System.Xml.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 
 namespace SeaBattle.Shared.Models
 {
+    // Добавим контракт для корректной сериализации
+    public class NetworkMessageContractResolver : DefaultContractResolver
+    {
+        protected override JsonContract CreateContract(Type objectType)
+        {
+            var contract = base.CreateContract(objectType);
+            return contract;
+        }
+    }
+
     public enum MessageType
     {
         // Системные
@@ -27,13 +37,13 @@ namespace SeaBattle.Shared.Models
         PlayerLeftRoom = 108,
         StartGame = 109,
 
-        GameReady = 110,        // Игрок готов к игре
-        GameState = 111,       // Состояние игры
-        Attack = 112,          // Атака
-        AttackResult = 113,    // Результат атаки
-        GameOver = 114,        // Игра окончена
-        TurnChanged = 115,     // Смена хода
-        TimerUpdate = 116,     // Обновление таймера
+        GameReady = 110,
+        GameState = 111,
+        Attack = 112,
+        AttackResult = 113,
+        GameOver = 114,
+        TurnChanged = 115,
+        TimerUpdate = 116,
 
         // Игра
         PlaceShips = 200,
@@ -45,6 +55,20 @@ namespace SeaBattle.Shared.Models
 
     public class NetworkMessage
     {
+        private static readonly JsonSerializerSettings _jsonSettings;
+
+        static NetworkMessage()
+        {
+            _jsonSettings = new JsonSerializerSettings
+            {
+                ContractResolver = new NetworkMessageContractResolver(),
+                Formatting = Formatting.None,
+                NullValueHandling = NullValueHandling.Ignore,
+                DateFormatHandling = DateFormatHandling.IsoDateFormat,
+                DateTimeZoneHandling = DateTimeZoneHandling.Utc
+            };
+        }
+
         [JsonProperty("messageId")]
         public string MessageId { get; set; } = Guid.NewGuid().ToString();
 
@@ -62,12 +86,31 @@ namespace SeaBattle.Shared.Models
 
         public string ToJson()
         {
-            return JsonConvert.SerializeObject(this);
+            try
+            {
+                return JsonConvert.SerializeObject(this, _jsonSettings);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка сериализации: {ex.Message}");
+                return "{}";
+            }
         }
 
         public static NetworkMessage FromJson(string json)
         {
-            return JsonConvert.DeserializeObject<NetworkMessage>(json);
+            try
+            {
+                if (string.IsNullOrEmpty(json))
+                    return null;
+
+                return JsonConvert.DeserializeObject<NetworkMessage>(json, _jsonSettings);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка десериализации: {ex.Message}, JSON: {json}");
+                return null;
+            }
         }
     }
 
@@ -157,4 +200,36 @@ namespace SeaBattle.Shared.Models
         [JsonProperty("status")]
         public string Status { get; set; }
     }
+
+    public class TurnChangeData
+    {
+        [JsonProperty("nextPlayerId")]
+        public string NextPlayerId { get; set; }
+
+        [JsonProperty("previousPlayerId")]
+        public string PreviousPlayerId { get; set; }
+
+        [JsonProperty("timeLeft")]
+        public int TimeLeft { get; set; }
+    }
+
+    public class GameOverData
+    {
+        [JsonProperty("winnerId")]
+        public string WinnerId { get; set; }
+
+        [JsonProperty("winnerName")]
+        public string WinnerName { get; set; }
+
+        [JsonProperty("loserId")]
+        public string LoserId { get; set; }
+
+        [JsonProperty("loserName")]
+        public string LoserName { get; set; }
+
+        [JsonProperty("isSurrender")]
+        public bool IsSurrender { get; set; }
+    }
+
+   
 }

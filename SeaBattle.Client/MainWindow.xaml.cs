@@ -1,8 +1,6 @@
 ﻿using System;
-using System.IO;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Newtonsoft.Json.Linq;
@@ -12,243 +10,132 @@ namespace SeaBattle.Client
 {
     public partial class MainWindow : Window
     {
-        public TcpClient TcpClient { get; private set; }
-        public NetworkStream Stream { get; private set; }
-        public string PlayerId { get; private set; }
-        public string PlayerName { get; private set; }
-        public bool IsConnected { get; private set; }
-
-        private CancellationTokenSource _cancellationTokenSource;
-
         public MainWindow()
         {
             InitializeComponent();
-            IsConnected = false;
+            App.Cts = new System.Threading.CancellationTokenSource();
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                string serverAddress = ServerAddressTextBox.Text;
-                int port = int.Parse(PortTextBox.Text);
-                PlayerName = PlayerNameTextBox.Text.Trim();
+                string serverAddress = ServerAddressTextBox.Text.Trim();
+                int port = int.Parse(PortTextBox.Text.Trim());
+                string playerName = PlayerNameTextBox.Text.Trim();
 
-                if (string.IsNullOrEmpty(PlayerName))
+                if (string.IsNullOrEmpty(playerName))
                 {
-                    MessageBox.Show("Введите имя игрока", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Введите имя игрока", "Ошибка");
                     return;
                 }
 
                 ConnectButton.IsEnabled = false;
                 ConnectButton.Content = "Подключение...";
 
-                TcpClient = new TcpClient();
-                await TcpClient.ConnectAsync(serverAddress, port);
+                // Создаем подключение
+                App.TcpClient = new TcpClient();
+                await App.TcpClient.ConnectAsync(serverAddress, port);
+                App.Stream = App.TcpClient.GetStream();
+                App.PlayerName = playerName;
 
-                Stream = TcpClient.GetStream();
-                IsConnected = true;
-                _cancellationTokenSource = new CancellationTokenSource();
+                // Отправляем Connect
+                var connectMsg = new NetworkMessage
+                {
+                    Type = MessageType.Connect,
+                    Data = JObject.FromObject(new ConnectData { PlayerName = playerName })
+                };
+                await SendMessageAsync(connectMsg);
 
-                UpdateUI();
+                // Ждем ответ с таймаутом
+                var response = await ReadOneMessageWithTimeout(5000);
 
-                // Запускаем прослушивание
-                _ = Task.Run(() => ListenToServer(_cancellationTokenSource.Token));
+                if (response?.Type == MessageType.ConnectResponse)
+                {
+                    var data = response.Data.ToObject<ConnectResponseData>();
+                    if (data.Success)
+                    {
+                        App.PlayerId = data.PlayerId;
+                        StatusText.Text = $"Подключено как {playerName}";
+                        ConnectionStatus.Text = "Подключено";
+                        ConnectionStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
+                        PlayerNameText.Text = playerName;
 
-                // Отправляем запрос на подключение
-                await SendConnectRequest();
-            }
-            catch (FormatException)
-            {
-                MessageBox.Show("Неверный формат порта", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                ConnectButton.IsEnabled = true;
-                ConnectButton.Content = "Подключиться";
+                        // Переходим в лобби
+                        var lobbyPage = new LobbyPage();
+                        this.Content = lobbyPage;
+                        return;
+                    }
+                }
+
+                // Если что-то пошло не так
+                throw new Exception("Не удалось подключиться к серверу");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка");
                 ConnectButton.IsEnabled = true;
                 ConnectButton.Content = "Подключиться";
+
+                App.TcpClient?.Close();
+                App.Stream?.Close();
             }
         }
 
-        private async Task SendConnectRequest()
+        private async Task<NetworkMessage> ReadOneMessageWithTimeout(int timeoutMs)
         {
-            var connectMessage = new NetworkMessage
+            try
             {
-                Type = MessageType.Connect,
-                Data = JObject.FromObject(new ConnectData
+                var readTask = Task.Run(async () =>
                 {
-                    PlayerName = PlayerName
-                })
-            };
+                    byte[] lenBytes = new byte[4];
+                    int read = await App.Stream.ReadAsync(lenBytes, 0, 4);
+                    if (read < 4) return null;
 
-            await SendMessageAsync(connectMessage);
+                    int msgLen = BitConverter.ToInt32(lenBytes, 0);
+                    if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) return null;
+
+                    byte[] msgData = new byte[msgLen];
+                    int totalRead = 0;
+                    while (totalRead < msgLen)
+                    {
+                        int r = await App.Stream.ReadAsync(msgData, totalRead, msgLen - totalRead);
+                        if (r == 0) return null;
+                        totalRead += r;
+                    }
+
+                    string json = Encoding.UTF8.GetString(msgData);
+                    return NetworkMessage.FromJson(json);
+                });
+
+                if (await Task.WhenAny(readTask, Task.Delay(timeoutMs)) == readTask)
+                {
+                    return await readTask;
+                }
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private async Task SendMessageAsync(NetworkMessage message)
         {
-            if (!IsConnected || Stream == null)
-                throw new InvalidOperationException("Не подключено к серверу");
-
             string json = message.ToJson();
             byte[] data = Encoding.UTF8.GetBytes(json);
-            byte[] length = BitConverter.GetBytes(data.Length);
+            byte[] len = BitConverter.GetBytes(data.Length);
 
-            await Stream.WriteAsync(length, 0, 4);
-            await Stream.WriteAsync(data, 0, data.Length);
-            await Stream.FlushAsync();
-        }
-
-        private async Task ListenToServer(CancellationToken cancellationToken)
-        {
-            try
-            {
-                byte[] buffer = new byte[4096];
-
-                while (IsConnected && TcpClient?.Connected == true && !cancellationToken.IsCancellationRequested)
-                {
-                    try
-                    {
-                        byte[] lengthBytes = new byte[4];
-                        int lengthBytesRead = await Stream.ReadAsync(lengthBytes, 0, 4, cancellationToken);
-                        if (lengthBytesRead < 4) break;
-
-                        int messageLength = BitConverter.ToInt32(lengthBytes, 0);
-                        byte[] messageBytes = new byte[messageLength];
-                        int totalBytesRead = 0;
-
-                        while (totalBytesRead < messageLength)
-                        {
-                            int bytesRead = await Stream.ReadAsync(messageBytes, totalBytesRead,
-                                messageLength - totalBytesRead, cancellationToken);
-                            if (bytesRead == 0) break;
-                            totalBytesRead += bytesRead;
-                        }
-
-                        string json = Encoding.UTF8.GetString(messageBytes, 0, totalBytesRead);
-                        var message = NetworkMessage.FromJson(json);
-
-                        await Dispatcher.InvokeAsync(() => ProcessServerMessage(message));
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (Exception ex) when (ex is IOException || ex is ObjectDisposedException)
-                    {
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MessageBox.Show($"Ошибка соединения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                    });
-                }
-            }
-        }
-
-        private void ProcessServerMessage(NetworkMessage message)
-        {
-            try
-            {
-                switch (message.Type)
-                {
-                    case MessageType.ConnectResponse:
-                        HandleConnectResponse(message);
-                        break;
-
-                    case MessageType.Error:
-                        MessageBox.Show($"Ошибка от сервера: {message.Data?["Message"]}", "Ошибка",
-                                      MessageBoxButton.OK, MessageBoxImage.Error);
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private void HandleConnectResponse(NetworkMessage message)
-        {
-            var data = message.Data.ToObject<ConnectResponseData>();
-
-            if (data.Success)
-            {
-                PlayerId = data.PlayerId;
-                PlayerName = PlayerNameTextBox.Text;
-
-                StatusText.Text = $"Подключено как {PlayerName}";
-                ConnectionStatus.Text = "Подключено";
-                ConnectionStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
-                PlayerNameText.Text = PlayerName;
-
-                // Переходим в лобби
-                var lobbyPage = new LobbyPage(this);
-                this.Content = lobbyPage;
-            }
-            else
-            {
-                MessageBox.Show($"Ошибка подключения: {data.Message}", "Ошибка",
-                              MessageBoxButton.OK, MessageBoxImage.Error);
-                ConnectButton.IsEnabled = true;
-                ConnectButton.Content = "Подключиться";
-            }
-        }
-
-        private void UpdateUI()
-        {
-            ConnectButton.IsEnabled = !IsConnected;
-            PlayerNameTextBox.IsEnabled = !IsConnected;
-            ServerAddressTextBox.IsEnabled = !IsConnected;
-            PortTextBox.IsEnabled = !IsConnected;
-
-            StatusText.Text = IsConnected ? $"Подключено как {PlayerName}" : "Не подключено";
-            ConnectionStatus.Text = IsConnected ? "Подключено" : "Отключено";
-            ConnectionStatus.Foreground = IsConnected ?
-                System.Windows.Media.Brushes.LightGreen :
-                System.Windows.Media.Brushes.LightCoral;
+            await App.Stream.WriteAsync(len, 0, 4);
+            await App.Stream.WriteAsync(data, 0, data.Length);
         }
 
         private void ExitButton_Click(object sender, RoutedEventArgs e)
         {
-            Disconnect();
+            App.Cts.Cancel();
+            App.Stream?.Close();
+            App.TcpClient?.Close();
             Application.Current.Shutdown();
-        }
-
-        public void Disconnect()
-        {
-            try
-            {
-                IsConnected = false;
-                _cancellationTokenSource?.Cancel();
-
-                if (Stream != null)
-                {
-                    Stream.Close();
-                    Stream = null;
-                }
-
-                if (TcpClient != null)
-                {
-                    TcpClient.Close();
-                    TcpClient = null;
-                }
-            }
-            catch { }
-        }
-
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-        {
-            Disconnect();
-            base.OnClosing(e);
         }
     }
 }
