@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -61,9 +61,10 @@ namespace SeaBattle.Client
                         ConnectionStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
                         PlayerNameText.Text = playerName;
 
-                        // Переходим в лобби
+                        // Переходим в лобби (один общий ReadLoop — в MainWindow, чтобы не было двух читателей одного потока)
                         var lobbyPage = new LobbyPage();
                         this.Content = lobbyPage;
+                        _ = Task.Run((Func<Task>)ReadLoop);
                         return;
                     }
                 }
@@ -79,6 +80,58 @@ namespace SeaBattle.Client
 
                 App.TcpClient?.Close();
                 App.Stream?.Close();
+            }
+        }
+
+
+        // Единственный цикл чтения сообщений из потока. Рассылает сообщения текущей странице (Lobby или Game), чтобы не было двух конкурирующих читателей и обрезанного JSON.
+
+        private async Task ReadLoop()
+        {
+            try
+            {
+                while (!App.Cts.Token.IsCancellationRequested && App.TcpClient != null && App.TcpClient.Connected)
+                {
+                    if (App.Stream == null || !App.Stream.DataAvailable)
+                    {
+                        await Task.Delay(10);
+                        continue;
+                    }
+
+                    byte[] lenBytes = new byte[4];
+                    int read = await App.Stream.ReadAsync(lenBytes, 0, 4);
+                    if (read < 4) continue;
+
+                    int msgLen = BitConverter.ToInt32(lenBytes, 0);
+                    if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) continue;
+
+                    byte[] msgData = new byte[msgLen];
+                    int totalRead = 0;
+                    while (totalRead < msgLen)
+                    {
+                        int r = await App.Stream.ReadAsync(msgData, totalRead, msgLen - totalRead);
+                        if (r == 0) break;
+                        totalRead += r;
+                    }
+
+                    if (totalRead != msgLen) continue;
+
+                    string json = Encoding.UTF8.GetString(msgData);
+                    var message = NetworkMessage.FromJson(json);
+                    if (message == null) continue;
+
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (Content is LobbyPage lobby)
+                            lobby.HandleMessage(message);
+                        else if (Content is GamePage game)
+                            game.ProcessServerMessage(message);
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ReadLoop: {ex.Message}");
             }
         }
 

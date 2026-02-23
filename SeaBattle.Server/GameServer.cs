@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -128,30 +128,30 @@ namespace SeaBattle.Server
                                 await Task.Delay(10);
                                 continue;
                             }
-
+       
                             byte[] lengthBytes = new byte[4];
                             int lengthBytesRead = 0;
-
+       
                             while (lengthBytesRead < 4)
                             {
                                 int read = await stream.ReadAsync(lengthBytes, lengthBytesRead, 4 - lengthBytesRead);
                                 if (read == 0) break;
                                 lengthBytesRead += read;
                             }
-
+       
                             if (lengthBytesRead < 4) break;
-
+       
                             int messageLength = BitConverter.ToInt32(lengthBytes, 0);
-
+       
                             if (messageLength <= 0 || messageLength > 10 * 1024 * 1024)
                             {
                                 Console.WriteLine($"Некорректный размер сообщения: {messageLength}, пропускаем");
                                 continue;
                             }
-
+       
                             byte[] messageBytes = new byte[messageLength];
                             int totalBytesRead = 0;
-
+       
                             while (totalBytesRead < messageLength)
                             {
                                 int bytesRead = await stream.ReadAsync(messageBytes, totalBytesRead,
@@ -159,13 +159,13 @@ namespace SeaBattle.Server
                                 if (bytesRead == 0) break;
                                 totalBytesRead += bytesRead;
                             }
-
+       
                             if (totalBytesRead < messageLength)
                             {
                                 Console.WriteLine($"Неполное сообщение: {totalBytesRead}/{messageLength}");
                                 break;
                             }
-
+       
                             string json = Encoding.UTF8.GetString(messageBytes, 0, totalBytesRead);
 
                             if (json.Length > 0 && json.TrimStart()[0] == '{')
@@ -284,7 +284,6 @@ namespace SeaBattle.Server
 
                         await stream.WriteAsync(sendBuffer, 0, sendBuffer.Length);
                         await stream.FlushAsync();
-                        await Task.Delay(1);
                     }
                     catch (Exception ex)
                     {
@@ -366,7 +365,8 @@ namespace SeaBattle.Server
                         return await HandleStartGame(message, connectionId);
 
                     case MessageType.GameReady:
-                        return HandleGameReady(message, connectionId);
+                        _ = HandleGameReadyAsync(message, connectionId);
+                        return null;
 
                     case MessageType.Attack:
                         return await HandleAttack(message, connectionId);
@@ -657,7 +657,6 @@ namespace SeaBattle.Server
 
                     if (room.IsFull)
                     {
-                        Console.WriteLine($"Комната {room.Name} полная, автоматически начинаем игру!");
 
                         if (_lobbyManager.StartGame(room.Id))
                         {
@@ -669,43 +668,63 @@ namespace SeaBattle.Server
                                 Status = GameSessionStatus.PlacingShips
                             };
                             _gameSessions[room.Id] = gameSession;
-
-                            var startGameMessage = new NetworkMessage
+                            
+                            // Отправляем сообщение StartGame обоим игрокам, чтобы они перешли на страницу игры
+                            var startGameMessageTemplate = new GameStartData
                             {
-                                Type = MessageType.StartGame,
-                                SenderId = "SERVER",
-                                Data = JObject.FromObject(new GameStartData
+                                RoomId = room.Id,
+                                Player1 = new PlayerInfo
                                 {
-                                    RoomId = room.Id,
-                                    Player1 = new PlayerInfo
-                                    {
-                                        Id = room.Creator.Id,
-                                        Name = room.Creator.Name,
-                                        Status = "InGame"
-                                    },
-                                    Player2 = new PlayerInfo
-                                    {
-                                        Id = room.Player2.Id,
-                                        Name = room.Player2.Name,
-                                        Status = "InGame"
-                                    }
-                                })
+                                    Id = room.Creator.Id,
+                                    Name = room.Creator.Name,
+                                    Status = "InGame"
+                                },
+                                Player2 = new PlayerInfo
+                                {
+                                    Id = room.Player2.Id,
+                                    Name = room.Player2.Name,
+                                    Status = "InGame"
+                                }
                             };
 
+                            // Отправляем сообщение StartGame обоим игрокам
                             if (_playerStreams.TryGetValue(room.Creator.Id, out var creatorStream))
                             {
-                                await SendMessageAsync(creatorStream, startGameMessage);
-                                Console.WriteLine($"Старт игры отправлен создателю {room.Creator.Name}");
+                                var creatorStartMessage = new NetworkMessage
+                                {
+                                    Type = MessageType.StartGame,
+                                    SenderId = "SERVER",
+                                    Data = JObject.FromObject(new GameStartData
+                                    {
+                                        RoomId = startGameMessageTemplate.RoomId,
+                                        Player1 = startGameMessageTemplate.Player1,
+                                        Player2 = startGameMessageTemplate.Player2,
+                                        YourPlayerId = room.Creator.Id
+                                    })
+                                };
+                                await SendMessageAsync(creatorStream, creatorStartMessage);
                             }
 
                             if (_playerStreams.TryGetValue(room.Player2.Id, out var player2Stream))
                             {
-                                await SendMessageAsync(player2Stream, startGameMessage);
-                                Console.WriteLine($"Старт игры отправлен игроку {room.Player2.Name}");
+                                var player2StartMessage = new NetworkMessage
+                                {
+                                    Type = MessageType.StartGame,
+                                    SenderId = "SERVER",
+                                    Data = JObject.FromObject(new GameStartData
+                                    {
+                                        RoomId = startGameMessageTemplate.RoomId,
+                                        Player1 = startGameMessageTemplate.Player1,
+                                        Player2 = startGameMessageTemplate.Player2,
+                                        YourPlayerId = room.Player2.Id
+                                    })
+                                };
+                                await SendMessageAsync(player2Stream, player2StartMessage);
                             }
-
-                            BroadcastRoomsList();
                         }
+
+                        // Обновляем статус комнаты и отправляем обновленный список всем игрокам
+                        BroadcastRoomsList();
                     }
 
                     return null;
@@ -777,6 +796,7 @@ namespace SeaBattle.Server
 
                 Console.WriteLine($"Игрок {player.Name} покинул комнату");
 
+                // Обновляем список комнат для всех
                 BroadcastRoomsList();
 
                 if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
@@ -795,6 +815,11 @@ namespace SeaBattle.Server
                     };
                     await SendMessageAsync(opponentStream, leaveNotification);
                 }
+            }
+            else
+            {
+                // Если игрок не был в комнате, отправляем ему обновленный список комнат
+                BroadcastRoomsList();
             }
 
             return new NetworkMessage
@@ -929,7 +954,7 @@ namespace SeaBattle.Server
             }
         }
 
-        private NetworkMessage HandleGameReady(NetworkMessage message, string connectionId)
+        private async Task<NetworkMessage> HandleGameReadyAsync(NetworkMessage message, string connectionId)
         {
             var player = _players.Values.FirstOrDefault(p => p.ConnectionId == connectionId);
             if (player == null)
@@ -967,14 +992,16 @@ namespace SeaBattle.Server
                         PlayerName = player.Name
                     })
                 };
-                Task.Run(async () => await SendMessageAsync(opponentStream, readyNotification));
+                await SendMessageAsync(opponentStream, readyNotification);
             }
 
             if (gameSession.AreBothPlayersReady())
             {
                 gameSession.Status = GameSessionStatus.InProgress;
                 gameSession.CurrentTurnPlayerId = new Random().Next(2) == 0 ? room.Creator.Id : room.Player2.Id;
-                Task.Run(async () => await SendGameStateToBothPlayers(gameSession, room));
+                
+                // Просто отправляем состояние игры без повторной отправки StartGame
+                await SendGameStateToBothPlayers(gameSession, room);
             }
 
             return null;
@@ -1047,18 +1074,43 @@ namespace SeaBattle.Server
                 };
             }
 
-            if (opponentBoard.AllShipsDestroyed)
+            bool gameOver = opponentBoard.HasNoShipCellsLeft();
+            if (gameOver)
             {
                 attackResult.IsGameOver = true;
                 attackResult.WinnerId = player.Id;
                 gameSession.Status = GameSessionStatus.Finished;
 
+                // Сначала отправляем результат последнего выстрела обоим, чтобы отобразить его на досках
+                if (_playerStreams.TryGetValue(player.Id, out var winnerStreamForResult))
+                {
+                    var resultMessage = new NetworkMessage
+                    {
+                        Type = MessageType.AttackResult,
+                        SenderId = player.Id,
+                        Data = JObject.FromObject(attackResult)
+                    };
+                    await SendMessageAsync(winnerStreamForResult, resultMessage);
+                }
+                if (_playerStreams.TryGetValue(opponent.Id, out var loserStreamForResult))
+                {
+                    var defenderResultMessage = new NetworkMessage
+                    {
+                        Type = MessageType.AttackResult,
+                        SenderId = player.Id,
+                        Data = JObject.FromObject(attackResult)
+                    };
+                    await SendMessageAsync(loserStreamForResult, defenderResultMessage);
+                }
+
+                // Затем уведомляем о конце игры и победе/поражении
                 var gameOverData = new GameOverData
                 {
                     WinnerId = player.Id,
                     WinnerName = player.Name,
                     LoserId = opponent.Id,
-                    LoserName = opponent.Name
+                    LoserName = opponent.Name,
+                    IsSurrender = false
                 };
 
                 if (_playerStreams.TryGetValue(player.Id, out var winnerStream))
@@ -1083,6 +1135,10 @@ namespace SeaBattle.Server
                     await SendMessageAsync(loserStream, loserMessage);
                 }
 
+                _lobbyManager.RemoveRoom(room.Id);
+                _gameSessions.TryRemove(room.Id, out _);
+                BroadcastRoomsList();
+
                 return null;
             }
 
@@ -1106,6 +1162,42 @@ namespace SeaBattle.Server
                     Data = JObject.FromObject(attackResult)
                 };
                 await SendMessageAsync(defenderStream, defenderResultMessage);
+            }
+
+            // Повторная проверка по сетке после отправки AttackResult
+            if (opponentBoard.HasNoShipCellsLeft())
+            {
+                gameSession.Status = GameSessionStatus.Finished;
+                var gameOverData = new GameOverData
+                {
+                    WinnerId = player.Id,
+                    WinnerName = player.Name,
+                    LoserId = opponent.Id,
+                    LoserName = opponent.Name,
+                    IsSurrender = false
+                };
+                if (_playerStreams.TryGetValue(player.Id, out var winnerStreamGo))
+                {
+                    await SendMessageAsync(winnerStreamGo, new NetworkMessage
+                    {
+                        Type = MessageType.GameOver,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(gameOverData)
+                    });
+                }
+                if (_playerStreams.TryGetValue(opponent.Id, out var loserStreamGo))
+                {
+                    await SendMessageAsync(loserStreamGo, new NetworkMessage
+                    {
+                        Type = MessageType.GameOver,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(gameOverData)
+                    });
+                }
+                _lobbyManager.RemoveRoom(room.Id);
+                _gameSessions.TryRemove(room.Id, out _);
+                BroadcastRoomsList();
+                return null;
             }
 
             if (!attackResult.IsHit)
@@ -1159,6 +1251,27 @@ namespace SeaBattle.Server
                     gameSession.Status = GameSessionStatus.Finished;
                 }
 
+                // Игрок сдался — уведомляем противника (победителя) о победе и перекидываем в лобби
+                var opponent = room.GetOpponent(player.Id);
+                if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
+                {
+                    var gameOverData = new GameOverData
+                    {
+                        WinnerId = opponent.Id,
+                        WinnerName = opponent.Name,
+                        LoserId = player.Id,
+                        LoserName = player.Name,
+                        IsSurrender = true
+                    };
+                    var gameOverMessage = new NetworkMessage
+                    {
+                        Type = MessageType.GameOver,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(gameOverData)
+                    };
+                    await SendMessageAsync(opponentStream, gameOverMessage);
+                }
+
                 _lobbyManager.RemoveRoom(room.Id);
                 _gameSessions.TryRemove(room.Id, out _);
 
@@ -1172,6 +1285,12 @@ namespace SeaBattle.Server
         {
             var player1Board = gameSession.GetPlayerBoard(room.Creator.Id);
             var player2Board = gameSession.GetPlayerBoard(room.Player2.Id);
+
+            if (player1Board == null || player2Board == null)
+            {
+                Console.WriteLine($"Ошибка: одна из игровых досок не найдена для комнаты {room.Id}");
+                return;
+            }
 
             var stateForPlayer1 = new GameState
             {
@@ -1194,6 +1313,10 @@ namespace SeaBattle.Server
                     Data = JObject.FromObject(stateForPlayer1)
                 };
                 await SendMessageAsync(creatorStream, stateMessage);
+            }
+            else
+            {
+                Console.WriteLine($"Не удалось получить поток для игрока {room.Creator.Name} ({room.Creator.Id})");
             }
 
             var stateForPlayer2 = new GameState
@@ -1218,6 +1341,13 @@ namespace SeaBattle.Server
                 };
                 await SendMessageAsync(player2Stream, stateMessage);
             }
+            else
+            {
+                Console.WriteLine($"Не удалось получить поток для игрока {room.Player2.Name} ({room.Player2.Id})");
+            }
+
+            // После начала игры обновляем статус комнаты и отправляем обновленный список всем игрокам
+            BroadcastRoomsList();
         }
 
         private async Task SendMessageAsync(NetworkStream stream, NetworkMessage message)
@@ -1237,8 +1367,6 @@ namespace SeaBattle.Server
 
                 await stream.WriteAsync(sendBuffer, 0, sendBuffer.Length);
                 await stream.FlushAsync();
-
-                await Task.Delay(5);
             }
             catch (Exception ex)
             {

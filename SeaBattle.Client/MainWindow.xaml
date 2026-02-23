@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:SeaBattle.Client"
         Title="Морской бой" 
         Height="600" 
-        Width="800"
+        Width="900"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E">
 

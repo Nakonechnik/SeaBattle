@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
@@ -23,6 +23,8 @@ namespace SeaBattle.Client
         {
             get { return CreatorId == App.PlayerId; }
         }
+        
+        public bool AmIInThisRoom { get; set; } = false;
 
         public Brush StatusColor
         {
@@ -45,7 +47,6 @@ namespace SeaBattle.Client
         private ObservableCollection<ClientRoomInfo> _myRooms = new ObservableCollection<ClientRoomInfo>();
         private ObservableCollection<ClientRoomInfo> _availableRooms = new ObservableCollection<ClientRoomInfo>();
         private string _currentRoomId;
-        private bool _isReading = false;
 
         public LobbyPage()
         {
@@ -55,12 +56,7 @@ namespace SeaBattle.Client
             AvailableRoomsListBox.ItemsSource = _availableRooms;
             PlayerNameText.Text = App.PlayerName;
 
-            // Запускаем чтение сообщений (только один раз)
-            if (!_isReading)
-            {
-                _isReading = true;
-                Task.Run((Func<Task>)ReadLoop);
-            }
+            // Чтение сообщений выполняет один ReadLoop в MainWindow
 
             // Запрашиваем список комнат
             Task.Delay(500).ContinueWith(_ =>
@@ -69,54 +65,7 @@ namespace SeaBattle.Client
             });
         }
 
-        private async Task ReadLoop()
-        {
-            try
-            {
-                while (!App.Cts.Token.IsCancellationRequested && App.TcpClient.Connected)
-                {
-                    if (App.Stream.DataAvailable)
-                    {
-                        // Читаем длину
-                        byte[] lenBytes = new byte[4];
-                        int read = await App.Stream.ReadAsync(lenBytes, 0, 4);
-                        if (read < 4) continue;
-
-                        int msgLen = BitConverter.ToInt32(lenBytes, 0);
-                        if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) continue;
-
-                        // Читаем тело
-                        byte[] msgData = new byte[msgLen];
-                        int totalRead = 0;
-                        while (totalRead < msgLen)
-                        {
-                            int r = await App.Stream.ReadAsync(msgData, totalRead, msgLen - totalRead);
-                            if (r == 0) break;
-                            totalRead += r;
-                        }
-
-                        string json = Encoding.UTF8.GetString(msgData);
-                        var message = NetworkMessage.FromJson(json);
-
-                        if (message != null)
-                        {
-                            var msg = message;
-                            await Dispatcher.InvokeAsync(() => HandleMessage(msg));
-                        }
-                    }
-                    else
-                    {
-                        await Task.Delay(10);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ReadLoop error: {ex.Message}");
-            }
-        }
-
-        private void HandleMessage(NetworkMessage msg)
+        public void HandleMessage(NetworkMessage msg)
         {
             switch (msg.Type)
             {
@@ -144,6 +93,7 @@ namespace SeaBattle.Client
                     var myRoom = _myRooms.FirstOrDefault(r => r.Id == roomId);
                     DeleteRoomButton.IsEnabled = myRoom != null && myRoom.IsMyRoom;
 
+                    // Вызываем обновление списка комнат, чтобы отобразить комнату правильно
                     _ = GetRooms();
                     break;
 
@@ -153,7 +103,7 @@ namespace SeaBattle.Client
 
                     Dispatcher.InvokeAsync(() =>
                     {
-                        _currentRoomId = null;
+                        _currentRoomId = gameData.RoomId;
                         CreateRoomButton.IsEnabled = true;
                         DeleteRoomButton.IsEnabled = false;
 
@@ -168,7 +118,11 @@ namespace SeaBattle.Client
 
                 case MessageType.PlayerJoinedRoom:
                     var playerName = msg.Data["PlayerName"]?.ToString() ?? "Игрок";
-                    RoomStatusText.Text = $"{playerName} присоединился!";
+                    // Обновляем статус только если мы в комнате
+                    if (!string.IsNullOrEmpty(_currentRoomId))
+                    {
+                        RoomStatusText.Text = $"{playerName} присоединился!";
+                    }
                     _ = GetRooms();
                     break;
 
@@ -201,6 +155,13 @@ namespace SeaBattle.Client
                     Status = room["status"]?.ToString() ?? room["Status"]?.ToString() ?? "Waiting"
                 };
 
+                // Проверяем, находимся ли мы в этой комнате
+                if (info.Id == _currentRoomId)
+                {
+                    info.AmIInThisRoom = true;
+                }
+
+                // Комната добавляется в "мои", если игрок является создателем
                 if (info.IsMyRoom)
                 {
                     _myRooms.Add(info);
@@ -210,6 +171,12 @@ namespace SeaBattle.Client
                         DeleteRoomButton.IsEnabled = true;
                     }
                 }
+                // Если я в этой комнате, но не являюсь создателем, тоже добавляем в "мои"
+                else if (info.AmIInThisRoom)
+                {
+                    _myRooms.Add(info);
+                }
+                // В противном случае, если комната доступна для присоединения, добавляем в доступные
                 else if (info.PlayerCount < 2 && info.Status != "InGame")
                 {
                     _availableRooms.Add(info);
@@ -218,14 +185,52 @@ namespace SeaBattle.Client
 
             ConnectionStatusText.Text = $"Моих: {_myRooms.Count}, Доступно: {_availableRooms.Count}";
 
-            // Проверяем, есть ли у нас своя комната
-            if (_myRooms.Count == 0)
+            // Сохраняем текущее состояние комнаты при обновлении списка
+            if (!string.IsNullOrEmpty(_currentRoomId))
             {
-                // Если нет своих комнат, сбрасываем состояние
-                _currentRoomId = null;
-                CreateRoomButton.IsEnabled = true;
-                DeleteRoomButton.IsEnabled = false;
-                RoomStatusText.Text = "Не в комнате";
+                // Если мы в комнате, не сбрасываем это состояние при обновлении списка
+                var currentRoom = _myRooms.FirstOrDefault(r => r.Id == _currentRoomId);
+                if (currentRoom != null)
+                {
+                    RoomStatusText.Text = $"Вы в комнате: {currentRoom.Name}";
+                }
+                else
+                {
+                    // Если комната, в которой мы были, больше не существует, сбрасываем состояние
+                    var roomExists = rooms.Any(r => (r["id"]?.ToString() ?? r["Id"]?.ToString()) == _currentRoomId);
+                    if (!roomExists)
+                    {
+                        _currentRoomId = null;
+                        CreateRoomButton.IsEnabled = true;
+                        DeleteRoomButton.IsEnabled = false;
+                        RoomStatusText.Text = "Не в комнате";
+                    }
+                    else
+                    {
+                        // Если комната существует, но не была найдена в _myRooms, обновляем интерфейс
+                        var existingRoom = rooms.FirstOrDefault(r => (r["id"]?.ToString() ?? r["Id"]?.ToString()) == _currentRoomId);
+                        if (existingRoom != null)
+                        {
+                            var roomName = existingRoom["name"]?.ToString() ?? existingRoom["Name"]?.ToString() ?? "Без имени";
+                            RoomStatusText.Text = $"Вы в комнате: {roomName}";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Если мы не в комнате, проверяем, есть ли у нас свои комнаты
+                if (_myRooms.Count == 0)
+                {
+                    CreateRoomButton.IsEnabled = true;
+                    DeleteRoomButton.IsEnabled = false;
+                    RoomStatusText.Text = "Не в комнате";
+                }
+                else
+                {
+                    // Если у нас есть свои комнаты, но мы не в комнате, обновляем статус
+                    RoomStatusText.Text = "Не в комнате";
+                }
             }
         }
 

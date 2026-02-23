@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
@@ -163,14 +163,17 @@ namespace SeaBattle.Shared.Models
         // Проверка можно ли разместить корабль
         public bool CanPlaceShip(int x, int y, int size, bool isHorizontal)
         {
-            // Проверка границ
+            if (size <= 0 || size > BoardSize) return false;
+            if (x < 0 || y < 0) return false;
+
+            // Проверка границ: корабль целиком внутри [0, BoardSize-1]
             if (isHorizontal)
             {
-                if (x + size > BoardSize) return false;
+                if (x + size > BoardSize || y >= BoardSize) return false;
             }
             else
             {
-                if (y + size > BoardSize) return false;
+                if (y + size > BoardSize || x >= BoardSize) return false;
             }
 
             // Проверка соседних клеток
@@ -202,46 +205,94 @@ namespace SeaBattle.Shared.Models
             return true;
         }
 
-        // Разместить корабль
+        // Разместить корабль (только если все клетки в пределах [0, BoardSize-1])
         public void PlaceShip(Ship ship, int x, int y, bool isHorizontal)
         {
-            ship.Cells.Clear();
+            if (ship == null || ship.Size <= 0) return;
+            if (!CanPlaceShip(x, y, ship.Size, isHorizontal)) return;
+
+            ship.Cells?.Clear();
             ship.IsPlaced = true;
 
             for (int i = 0; i < ship.Size; i++)
             {
                 int cellX = isHorizontal ? x + i : x;
                 int cellY = isHorizontal ? y : y + i;
-
+                if (cellX < 0 || cellX >= BoardSize || cellY < 0 || cellY >= BoardSize)
+                {
+                    ship.IsPlaced = false;
+                    ship.Cells?.Clear();
+                    return;
+                }
                 _cells[cellX, cellY] = CellState.Ship;
                 ship.Cells.Add(new ShipCell { X = cellX, Y = cellY, IsHit = false });
             }
         }
 
+        // Сбрасывает поле и все корабли
+        public void ClearPlacement()
+        {
+            for (int x = 0; x < BoardSize; x++)
+                for (int y = 0; y < BoardSize; y++)
+                {
+                    _cells[x, y] = CellState.Empty;
+                    _visibleCells[x, y] = false;
+                }
+            if (_ships != null)
+            {
+                foreach (Ship ship in _ships)
+                {
+                    ship.IsPlaced = false;
+                    ship.Cells?.Clear();
+                }
+            }
+        }
+
         // Случайная расстановка
+        // Сначала сбрасываем поле, размещаем от больших к маленьким, перебираем все допустимые позиции.
         public void RandomPlacement()
         {
             Random random = new Random();
+            const int maxFullRetries = 50;
 
-            foreach (Ship ship in _ships)
+            for (int fullRetry = 0; fullRetry < maxFullRetries; fullRetry++)
             {
-                bool placed = false;
-                int attempts = 0;
+                ClearPlacement();
+                bool allPlaced = true;
 
-                while (!placed && attempts < 1000)
+                foreach (Ship ship in _ships)
                 {
-                    attempts++;
-                    bool isHorizontal = random.Next(2) == 0;
-                    int x = random.Next(isHorizontal ? BoardSize - ship.Size + 1 : BoardSize);
-                    int y = random.Next(isHorizontal ? BoardSize : BoardSize - ship.Size + 1);
+                    var validPositions = new List<(int x, int y, bool isHorizontal)>();
 
-                    if (CanPlaceShip(x, y, ship.Size, isHorizontal))
+                    for (int orientation = 0; orientation <= 1; orientation++)
                     {
-                        PlaceShip(ship, x, y, isHorizontal);
-                        placed = true;
+                        bool isHorizontal = (orientation == 1);
+                        int maxX = isHorizontal ? BoardSize - ship.Size + 1 : BoardSize;
+                        int maxY = isHorizontal ? BoardSize : BoardSize - ship.Size + 1;
+                        if (maxX <= 0 || maxY <= 0) continue;
+
+                        for (int x = 0; x < maxX; x++)
+                            for (int y = 0; y < maxY; y++)
+                                if (CanPlaceShip(x, y, ship.Size, isHorizontal))
+                                    validPositions.Add((x, y, isHorizontal));
                     }
+
+                    if (validPositions.Count == 0)
+                    {
+                        allPlaced = false;
+                        break;
+                    }
+
+                    var pos = validPositions[random.Next(validPositions.Count)];
+                    PlaceShip(ship, pos.x, pos.y, pos.isHorizontal);
                 }
+
+                if (allPlaced)
+                    return;
             }
+
+            // Если за maxFullRetries не получилось — оставляем поле пустым
+            ClearPlacement();
         }
 
         // Проверка готовности (все корабли размещены)
@@ -257,16 +308,30 @@ namespace SeaBattle.Shared.Models
             }
         }
 
-        // Проверка все ли корабли уничтожены
+        public bool HasNoShipCellsLeft()
+        {
+            if (_cells == null) return false;
+            for (int x = 0; x < BoardSize; x++)
+                for (int y = 0; y < BoardSize; y++)
+                    if (_cells[x, y] == CellState.Ship) return false;
+            return true;
+        }
+
         public bool AllShipsDestroyed
         {
             get
             {
+                if (HasNoShipCellsLeft()) return true;
+                if (_ships == null || _ships.Count == 0) return false;
+                int placedCount = 0;
+                int destroyedPlacedCount = 0;
                 foreach (Ship ship in _ships)
                 {
-                    if (!ship.IsDestroyed) return false;
+                    if (!ship.IsPlaced) continue;
+                    placedCount++;
+                    if (ship.IsDestroyed) destroyedPlacedCount++;
                 }
-                return true;
+                return placedCount > 0 && placedCount == destroyedPlacedCount;
             }
         }
 

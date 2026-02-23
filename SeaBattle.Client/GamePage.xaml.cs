@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Sockets;
@@ -22,6 +22,8 @@ namespace SeaBattle.Client
         private bool _gameStarted;
         private string _enemyPlayerId;
         private string _enemyPlayerName;
+        private bool _gameOverHandled;
+        private bool _placeShipHorizontal = true;
 
         public GamePage(string roomId)
         {
@@ -40,52 +42,10 @@ namespace SeaBattle.Client
             UpdateShipsStatus();
             UpdateUIState();
 
-            Task.Run((Func<Task>)ReadLoop);
+            // Один общий ReadLoop в MainWindow
         }
 
-        private async Task ReadLoop()
-        {
-            try
-            {
-                while (!App.Cts.Token.IsCancellationRequested && App.TcpClient.Connected)
-                {
-                    if (App.Stream.DataAvailable)
-                    {
-                        byte[] lenBytes = new byte[4];
-                        int read = await App.Stream.ReadAsync(lenBytes, 0, 4);
-                        if (read < 4) continue;
-
-                        int msgLen = BitConverter.ToInt32(lenBytes, 0);
-                        if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) continue;
-
-                        byte[] msgData = new byte[msgLen];
-                        int totalRead = 0;
-                        while (totalRead < msgLen)
-                        {
-                            int r = await App.Stream.ReadAsync(msgData, totalRead, msgLen - totalRead);
-                            if (r == 0) break;
-                            totalRead += r;
-                        }
-
-                        string json = Encoding.UTF8.GetString(msgData);
-                        var message = NetworkMessage.FromJson(json);
-
-                        if (message != null)
-                        {
-                            var msg = message;
-                            await Dispatcher.InvokeAsync(() => ProcessServerMessage(msg));
-                        }
-                    }
-                    else
-                    {
-                        await Task.Delay(10);
-                    }
-                }
-            }
-            catch { }
-        }
-
-        private void ProcessServerMessage(NetworkMessage message)
+        public void ProcessServerMessage(NetworkMessage message)
         {
             try
             {
@@ -114,6 +74,9 @@ namespace SeaBattle.Client
                     case MessageType.Error:
                         MessageBox.Show($"Ошибка: {message.Data?["Message"]}", "Ошибка",
                                       MessageBoxButton.OK, MessageBoxImage.Error);
+                        // После ошибки снова включаем доску
+                        if (_gameStarted && _isMyTurn)
+                            IsEnemyBoardEnabled = true;
                         break;
 
                     case MessageType.PlayerLeftRoom:
@@ -130,9 +93,14 @@ namespace SeaBattle.Client
 
         private void HandleGameReady(NetworkMessage message)
         {
-            StatusText.Text = "Противник готов! Ожидание начала игры...";
-            StatusText.Foreground = Brushes.LightGreen;
-            GamePhaseText.Text = "Ожидание противника";
+            Dispatcher.Invoke(() =>
+            {
+                var playerData = message.Data.ToObject<PlayerInfo>();
+                string playerName = playerData?.Name ?? "Противник";
+                StatusText.Text = $"{playerName} готов! Ожидание начала игры...";
+                StatusText.Foreground = Brushes.LightGreen;
+                GamePhaseText.Text = "Ожидание противника";
+            });
         }
 
         private void HandleGameState(NetworkMessage message)
@@ -146,17 +114,21 @@ namespace SeaBattle.Client
                 _isMyTurn = gameState.CurrentTurnPlayerId == App.PlayerId;
                 _gameStarted = true;
 
-                EnemyTitleText.Text = $"ПОЛЕ {_enemyPlayerName?.ToUpper()}";
+                Dispatcher.Invoke(() =>
+                {
+                    EnemyTitleText.Text = $"ПОЛЕ {_enemyPlayerName?.ToUpper()}";
 
-                IsEnemyBoardEnabled = _isMyTurn;
-                StatusText.Text = _isMyTurn ? "Ваш ход!" : $"Ход {_enemyPlayerName}";
-                StatusText.Foreground = _isMyTurn ? Brushes.LightGreen : Brushes.Orange;
-                GamePhaseText.Text = "Идет бой";
-                SurrenderButton.IsEnabled = true;
+                    IsEnemyBoardEnabled = _isMyTurn;
+                    StatusText.Text = _isMyTurn ? "Ваш ход!" : $"Ход {_enemyPlayerName}";
+                    StatusText.Foreground = _isMyTurn ? Brushes.LightGreen : Brushes.Orange;
+                    GamePhaseText.Text = "Идет бой";
+                    SurrenderButton.IsEnabled = true;
 
-                RandomPlaceButton.IsEnabled = false;
-                ClearBoardButton.IsEnabled = false;
-                ReadyButton.IsEnabled = false;
+                    RandomPlaceButton.IsEnabled = false;
+                    ClearBoardButton.IsEnabled = false;
+                    OrientationButton.IsEnabled = false;
+                    ReadyButton.IsEnabled = false;
+                });
             }
             catch (Exception ex)
             {
@@ -170,31 +142,68 @@ namespace SeaBattle.Client
             try
             {
                 var result = message.Data.ToObject<AttackResult>();
+                if (result.X < 0 || result.X >= 10 || result.Y < 0 || result.Y >= 10) return;
 
-                if (result.X >= 0 && result.X < 10 && result.Y >= 0 && result.Y < 10)
+                bool iAmAttacker = message.SenderId == App.PlayerId;
+
+                if (iAmAttacker)
                 {
+                    // Мы стреляли — обновляем поле противника
                     _enemyBoard.Cells[result.X, result.Y] = result.IsHit
                         ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
                         : CellState.Miss;
-
                     _enemyBoard.VisibleCells[result.X, result.Y] = true;
                     EnemyBoardControl.UpdateBoard();
 
-                    if (message.SenderId == App.PlayerId)
-                    {
-                        string hitMessage = result.IsDestroyed
-                            ? $"Корабль уничтожен! (размер: {result.ShipSize})"
-                            : (result.IsHit ? "Попадание!" : "Промах");
+                    string hitMessage = result.IsDestroyed
+                        ? $"Корабль уничтожен! (размер: {result.ShipSize})"
+                        : (result.IsHit ? "Попадание!" : "Промах");
+                    TurnStatusText.Text = hitMessage;
+                    TurnStatusText.Foreground = result.IsHit ? Brushes.LightGreen : Brushes.Orange;
 
-                        TurnStatusText.Text = hitMessage;
-                        TurnStatusText.Foreground = result.IsHit ? Brushes.LightGreen : Brushes.Orange;
+                    if (result.IsHit && !result.IsGameOver)
+                    {
+                        IsEnemyBoardEnabled = true;
+                        TurnStatusText.Text = result.IsDestroyed
+                            ? $"Корабль уничтожен! (размер: {result.ShipSize}) — стреляйте ещё"
+                            : "Попадание! Стреляйте ещё раз";
                     }
 
-                    if (result.IsDestroyed)
+                    if (result.IsDestroyed && !result.IsGameOver)
                     {
-                        MessageBox.Show($"Корабль противника уничтожен! Размер: {result.ShipSize}",
-                                      "Попадание!", MessageBoxButton.OK, MessageBoxImage.Information);
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            MessageBox.Show($"Корабль противника уничтожен! Размер: {result.ShipSize}",
+                                            "Попадание!", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }, System.Windows.Threading.DispatcherPriority.Background);
                     }
+                }
+                else
+                {
+                    // По нам стрелял противник — обновляем наше поле
+                    _myBoard.Cells[result.X, result.Y] = result.IsHit
+                        ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
+                        : CellState.Miss;
+                    MyBoardControl.UpdateBoard();
+
+                    TurnStatusText.Text = result.IsHit
+                        ? (result.IsDestroyed ? "Противник уничтожил ваш корабль!" : "Противник попал!")
+                        : "Противник промахнулся.";
+                    TurnStatusText.Foreground = result.IsHit ? Brushes.LightCoral : Brushes.Orange;
+
+                    if (result.IsDestroyed && !result.IsGameOver)
+                    {
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            MessageBox.Show($"Противник уничтожил ваш корабль! Размер: {result.ShipSize}",
+                                            "Ваш корабль потоплен", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        }, System.Windows.Threading.DispatcherPriority.Background);
+                    }
+                }
+
+                if (result.IsGameOver)
+                {
+                    ApplyGameOverUI(result.WinnerId == App.PlayerId);
                 }
             }
             catch (Exception ex)
@@ -202,6 +211,37 @@ namespace SeaBattle.Client
                 MessageBox.Show($"Ошибка обработки результата атаки: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // Отключает доски и кнопки, показывает победу/поражение, возвращает в лобби.
+        private void ApplyGameOverUI(bool isWinner)
+        {
+            if (_gameOverHandled) return;
+            _gameOverHandled = true;
+
+            IsEnemyBoardEnabled = false;
+            MyBoardControl.IsEnabled = false;
+            SurrenderButton.IsEnabled = false;
+            RandomPlaceButton.IsEnabled = false;
+            ClearBoardButton.IsEnabled = false;
+            OrientationButton.IsEnabled = false;
+            ReadyButton.IsEnabled = false;
+            StatusText.Text = isWinner ? "Победа!" : "Поражение";
+            StatusText.Foreground = isWinner ? Brushes.Gold : Brushes.Red;
+            GamePhaseText.Text = "Игра окончена";
+            TurnStatusText.Text = isWinner ? "Все корабли противника уничтожены!" : "Все ваши корабли уничтожены.";
+
+            string msg = isWinner
+                ? "Поздравляем! Вы победили! Все корабли противника уничтожены!"
+                : "Вы проиграли. Все ваши корабли уничтожены.";
+            MessageBox.Show(msg, "Игра окончена",
+                MessageBoxButton.OK, isWinner ? MessageBoxImage.Information : MessageBoxImage.Exclamation);
+
+            Task.Run(async () =>
+            {
+                await Task.Delay(2000);
+                await Dispatcher.InvokeAsync(() => ReturnToLobby());
+            });
         }
 
         private void HandleTurnChanged(NetworkMessage message)
@@ -239,35 +279,41 @@ namespace SeaBattle.Client
         {
             try
             {
+                if (_gameOverHandled) return;
+
                 var data = message.Data.ToObject<GameOverData>();
                 bool isWinner = data.WinnerId == App.PlayerId;
-
-                string gameOverMessage = isWinner
-                    ? "Поздравляем! Вы победили! 🎉"
-                    : $"Вы проиграли. Победитель: {data.WinnerName}";
-
-                MessageBox.Show(gameOverMessage, "Игра окончена",
-                              MessageBoxButton.OK, isWinner ? MessageBoxImage.Information : MessageBoxImage.Exclamation);
+                _gameOverHandled = true;
 
                 IsEnemyBoardEnabled = false;
+                MyBoardControl.IsEnabled = false;
                 SurrenderButton.IsEnabled = false;
+                RandomPlaceButton.IsEnabled = false;
+                ClearBoardButton.IsEnabled = false;
+                OrientationButton.IsEnabled = false;
+                ReadyButton.IsEnabled = false;
                 StatusText.Text = isWinner ? "Победа!" : "Поражение";
                 StatusText.Foreground = isWinner ? Brushes.Gold : Brushes.LightCoral;
                 GamePhaseText.Text = "Игра окончена";
 
+                string gameOverMessage = data.IsSurrender
+                    ? (isWinner ? "Противник сдался. Вы победили!" : "Вы сдались. Игра окончена.")
+                    : (isWinner ? "Поздравляем! Вы победили! Все корабли противника уничтожены!" : $"Вы проиграли. Все ваши корабли уничтожены. Победитель: {data.WinnerName}");
+
+                MessageBox.Show(gameOverMessage, "Игра окончена",
+                              MessageBoxButton.OK, isWinner ? MessageBoxImage.Information : MessageBoxImage.Exclamation);
+
                 Task.Run(async () =>
                 {
-                    await Task.Delay(3000);
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        ReturnToLobby();
-                    });
+                    await Task.Delay(2000);
+                    await Dispatcher.InvokeAsync(() => ReturnToLobby());
                 });
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка обработки конца игры: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
+                ReturnToLobby();
             }
         }
 
@@ -297,21 +343,22 @@ namespace SeaBattle.Client
                 return;
             }
 
-            if (_myBoard.CanPlaceShip(e.X, e.Y, shipToPlace.Size, true))
+            bool horizontal = _placeShipHorizontal;
+            if (_myBoard.CanPlaceShip(e.X, e.Y, shipToPlace.Size, horizontal))
             {
-                _myBoard.PlaceShip(shipToPlace, e.X, e.Y, true);
+                _myBoard.PlaceShip(shipToPlace, e.X, e.Y, horizontal);
                 MyBoardControl.UpdateBoard();
                 UpdateShipsStatus();
             }
-            else if (_myBoard.CanPlaceShip(e.X, e.Y, shipToPlace.Size, false))
+            else if (_myBoard.CanPlaceShip(e.X, e.Y, shipToPlace.Size, !horizontal))
             {
-                _myBoard.PlaceShip(shipToPlace, e.X, e.Y, false);
+                _myBoard.PlaceShip(shipToPlace, e.X, e.Y, !horizontal);
                 MyBoardControl.UpdateBoard();
                 UpdateShipsStatus();
             }
             else
             {
-                MessageBox.Show("Нельзя разместить корабль здесь! Корабли не должны касаться друг друга.", "Ошибка",
+                MessageBox.Show("Нельзя разместить корабль здесь! Корабли не должны касаться друг друга. Попробуйте другую клетку или смените ориентацию.", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -383,6 +430,13 @@ namespace SeaBattle.Client
             await App.Stream.FlushAsync();
         }
 
+        private void OrientationButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_gameStarted) return;
+            _placeShipHorizontal = !_placeShipHorizontal;
+            OrientationButton.Content = _placeShipHorizontal ? "Горизонтально" : "Вертикально";
+        }
+
         private void RandomPlaceButton_Click(object sender, RoutedEventArgs e)
         {
             if (_gameStarted) return;
@@ -434,6 +488,7 @@ namespace SeaBattle.Client
                 ReadyButton.IsEnabled = false;
                 RandomPlaceButton.IsEnabled = false;
                 ClearBoardButton.IsEnabled = false;
+                OrientationButton.IsEnabled = false;
                 StatusText.Text = "Готов к игре! Ожидание противника...";
                 StatusText.Foreground = Brushes.Orange;
                 GamePhaseText.Text = "Ожидание противника";
@@ -546,6 +601,7 @@ namespace SeaBattle.Client
             {
                 RandomPlaceButton.IsEnabled = false;
                 ClearBoardButton.IsEnabled = false;
+                OrientationButton.IsEnabled = false;
                 ReadyButton.IsEnabled = false;
                 SurrenderButton.IsEnabled = true;
             }
@@ -553,6 +609,7 @@ namespace SeaBattle.Client
             {
                 RandomPlaceButton.IsEnabled = true;
                 ClearBoardButton.IsEnabled = true;
+                OrientationButton.IsEnabled = true;
                 SurrenderButton.IsEnabled = false;
             }
         }
