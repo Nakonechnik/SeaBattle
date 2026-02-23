@@ -249,7 +249,6 @@ namespace SeaBattle.Shared.Models
         }
 
         // Случайная расстановка
-        // Сначала сбрасываем поле, размещаем от больших к маленьким, перебираем все допустимые позиции.
         public void RandomPlacement()
         {
             Random random = new Random();
@@ -335,12 +334,13 @@ namespace SeaBattle.Shared.Models
             }
         }
 
-        // Атака
+        // ИСПРАВЛЕННЫЙ МЕТОД АТАКИ
         public AttackResult Attack(int x, int y)
         {
             AttackResult result = new AttackResult();
             result.X = x;
             result.Y = y;
+            result.ChangedCells = new List<ShipCell>(); // Добавляем список измененных клеток
 
             if (x < 0 || x >= BoardSize || y < 0 || y >= BoardSize)
             {
@@ -357,6 +357,7 @@ namespace SeaBattle.Shared.Models
             }
 
             _visibleCells[x, y] = true;
+            result.ChangedCells.Add(new ShipCell { X = x, Y = y }); // Добавляем измененную клетку
 
             if (_cells[x, y] == CellState.Ship)
             {
@@ -395,15 +396,21 @@ namespace SeaBattle.Shared.Models
                         foreach (ShipCell c in ship.Cells)
                         {
                             _cells[c.X, c.Y] = CellState.Destroyed;
+                            result.ChangedCells.Add(new ShipCell { X = c.X, Y = c.Y });
                         }
 
-                        // Отмечаем ореол
-                        MarkPerimeter(ship);
+                        // Отмечаем ореол и добавляем все измененные клетки в результат
+                        var perimeterCells = MarkPerimeter(ship);
+                        foreach (var cell in perimeterCells)
+                        {
+                            result.ChangedCells.Add(cell);
+                        }
 
                         result.IsValid = true;
                         result.IsHit = true;
                         result.IsDestroyed = true;
                         result.ShipSize = ship.Size;
+                        result.ShipCells = ship.Cells; // Сохраняем клетки корабля
                         result.Message = "Корабль уничтожен!";
                         return result;
                     }
@@ -430,9 +437,11 @@ namespace SeaBattle.Shared.Models
             return result;
         }
 
-        // Отметка ореола вокруг уничтоженного корабля
-        private void MarkPerimeter(Ship ship)
+        // ИСПРАВЛЕННЫЙ МЕТОД MARKPERIMETER
+        private List<ShipCell> MarkPerimeter(Ship ship)
         {
+            var changedCells = new List<ShipCell>();
+
             foreach (ShipCell cell in ship.Cells)
             {
                 for (int dx = -1; dx <= 1; dx++)
@@ -448,11 +457,14 @@ namespace SeaBattle.Shared.Models
                             {
                                 _cells[x, y] = CellState.Miss;
                                 _visibleCells[x, y] = true;
+                                changedCells.Add(new ShipCell { X = x, Y = y });
                             }
                         }
                     }
                 }
             }
+
+            return changedCells;
         }
     }
 
@@ -469,6 +481,8 @@ namespace SeaBattle.Shared.Models
         private bool _isGameOver;
         private string _winnerId;
         private string _attackerId;
+        private List<ShipCell> _shipCells;
+        private List<ShipCell> _changedCells; // НОВОЕ ПОЛЕ
 
         [JsonProperty("attackerId")]
         public string AttackerId
@@ -538,6 +552,20 @@ namespace SeaBattle.Shared.Models
         {
             get { return _winnerId; }
             set { _winnerId = value; }
+        }
+
+        [JsonProperty("shipCells")]
+        public List<ShipCell> ShipCells
+        {
+            get { return _shipCells; }
+            set { _shipCells = value; }
+        }
+
+        [JsonProperty("changedCells")] // НОВОЕ ПОЛЕ
+        public List<ShipCell> ChangedCells
+        {
+            get { return _changedCells; }
+            set { _changedCells = value; }
         }
     }
 

@@ -148,11 +148,43 @@ namespace SeaBattle.Client
 
                 if (iAmAttacker)
                 {
-                    // Мы стреляли — обновляем поле противника
-                    _enemyBoard.Cells[result.X, result.Y] = result.IsHit
-                        ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
-                        : CellState.Miss;
-                    _enemyBoard.VisibleCells[result.X, result.Y] = true;
+                    // Мы стреляли — обновляем поле противника используя список измененных клеток
+                    if (result.ChangedCells != null && result.ChangedCells.Count > 0)
+                    {
+                        foreach (var cell in result.ChangedCells)
+                        {
+                            if (cell.X >= 0 && cell.X < 10 && cell.Y >= 0 && cell.Y < 10)
+                            {
+                                // Определяем состояние клетки
+                                if (result.ShipCells != null && result.ShipCells.Any(c => c.X == cell.X && c.Y == cell.Y))
+                                {
+                                    _enemyBoard.Cells[cell.X, cell.Y] = CellState.Destroyed;
+                                }
+                                else if (cell.X == result.X && cell.Y == result.Y)
+                                {
+                                    // Это клетка, в которую стреляли
+                                    _enemyBoard.Cells[cell.X, cell.Y] = result.IsHit
+                                        ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
+                                        : CellState.Miss;
+                                }
+                                else
+                                {
+                                    // Это клетка из ореола - всегда Miss
+                                    _enemyBoard.Cells[cell.X, cell.Y] = CellState.Miss;
+                                }
+                                _enemyBoard.VisibleCells[cell.X, cell.Y] = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Fallback для обратной совместимости
+                        _enemyBoard.Cells[result.X, result.Y] = result.IsHit
+                            ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
+                            : CellState.Miss;
+                        _enemyBoard.VisibleCells[result.X, result.Y] = true;
+                    }
+
                     EnemyBoardControl.UpdateBoard();
 
                     string hitMessage = result.IsDestroyed
@@ -168,37 +200,50 @@ namespace SeaBattle.Client
                             ? $"Корабль уничтожен! (размер: {result.ShipSize}) — стреляйте ещё"
                             : "Попадание! Стреляйте ещё раз";
                     }
-
-                    if (result.IsDestroyed && !result.IsGameOver)
-                    {
-                        Dispatcher.InvokeAsync(() =>
-                        {
-                            MessageBox.Show($"Корабль противника уничтожен! Размер: {result.ShipSize}",
-                                            "Попадание!", MessageBoxButton.OK, MessageBoxImage.Information);
-                        }, System.Windows.Threading.DispatcherPriority.Background);
-                    }
                 }
                 else
                 {
-                    // По нам стрелял противник — обновляем наше поле
-                    _myBoard.Cells[result.X, result.Y] = result.IsHit
-                        ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
-                        : CellState.Miss;
+                    // По нам стрелял противник — обновляем наше поле используя список измененных клеток
+                    if (result.ChangedCells != null && result.ChangedCells.Count > 0)
+                    {
+                        foreach (var cell in result.ChangedCells)
+                        {
+                            if (cell.X >= 0 && cell.X < 10 && cell.Y >= 0 && cell.Y < 10)
+                            {
+                                // Определяем состояние клетки
+                                if (result.ShipCells != null && result.ShipCells.Any(c => c.X == cell.X && c.Y == cell.Y))
+                                {
+                                    _myBoard.Cells[cell.X, cell.Y] = CellState.Destroyed;
+                                }
+                                else if (cell.X == result.X && cell.Y == result.Y)
+                                {
+                                    // Это клетка, в которую стреляли
+                                    _myBoard.Cells[cell.X, cell.Y] = result.IsHit
+                                        ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
+                                        : CellState.Miss;
+                                }
+                                else
+                                {
+                                    // Это клетка из ореола - всегда Miss
+                                    _myBoard.Cells[cell.X, cell.Y] = CellState.Miss;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Fallback для обратной совместимости
+                        _myBoard.Cells[result.X, result.Y] = result.IsHit
+                            ? (result.IsDestroyed ? CellState.Destroyed : CellState.Hit)
+                            : CellState.Miss;
+                    }
+
                     MyBoardControl.UpdateBoard();
 
                     TurnStatusText.Text = result.IsHit
                         ? (result.IsDestroyed ? "Противник уничтожил ваш корабль!" : "Противник попал!")
                         : "Противник промахнулся.";
                     TurnStatusText.Foreground = result.IsHit ? Brushes.LightCoral : Brushes.Orange;
-
-                    if (result.IsDestroyed && !result.IsGameOver)
-                    {
-                        Dispatcher.InvokeAsync(() =>
-                        {
-                            MessageBox.Show($"Противник уничтожил ваш корабль! Размер: {result.ShipSize}",
-                                            "Ваш корабль потоплен", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        }, System.Windows.Threading.DispatcherPriority.Background);
-                    }
                 }
 
                 if (result.IsGameOver)
