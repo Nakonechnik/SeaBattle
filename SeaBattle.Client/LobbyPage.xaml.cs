@@ -56,9 +56,10 @@ namespace SeaBattle.Client
             AvailableRoomsListBox.ItemsSource = _availableRooms;
             PlayerNameText.Text = App.PlayerName;
 
-            // Чтение сообщений выполняет один ReadLoop в MainWindow
+            var reconnectBtn = FindName("ReconnectToGameButton") as System.Windows.Controls.Button;
+            if (reconnectBtn != null)
+                reconnectBtn.Visibility = !string.IsNullOrEmpty(App.PendingReconnectRoomId) ? Visibility.Visible : Visibility.Collapsed;
 
-            // Запрашиваем список комнат
             Task.Delay(500).ContinueWith(_ =>
             {
                 Dispatcher.InvokeAsync(() => GetRooms());
@@ -86,14 +87,25 @@ namespace SeaBattle.Client
                 case MessageType.JoinedRoom:
                     var roomId = msg.Data["RoomId"]?.ToString() ?? msg.Data["roomId"]?.ToString();
                     var roomName = msg.Data["RoomName"]?.ToString() ?? msg.Data["roomName"]?.ToString();
-                    _currentRoomId = roomId;
-                    RoomStatusText.Text = $"Вы в комнате: {roomName}";
-                    CreateRoomButton.IsEnabled = false;
-
-                    var myRoom = _myRooms.FirstOrDefault(r => r.Id == roomId);
-                    DeleteRoomButton.IsEnabled = myRoom != null && myRoom.IsMyRoom;
-
-                    // Вызываем обновление списка комнат, чтобы отобразить комнату правильно
+                    var pendingReconnect = msg.Data["PendingReconnectRoomId"]?.ToString();
+                    if (!string.IsNullOrEmpty(pendingReconnect))
+                    {
+                        App.PendingReconnectRoomId = pendingReconnect;
+                        _currentRoomId = null;
+                        RoomStatusText.Text = msg.Data["Message"]?.ToString() ?? "Вы вышли из игры. Можете переподключиться.";
+                        CreateRoomButton.IsEnabled = true;
+                        var reconnectBtn = FindName("ReconnectToGameButton") as System.Windows.Controls.Button;
+                        if (reconnectBtn != null)
+                            reconnectBtn.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        _currentRoomId = roomId;
+                        RoomStatusText.Text = !string.IsNullOrEmpty(roomName) ? $"Вы в комнате: {roomName}" : (msg.Data["Message"]?.ToString() ?? "Вы в комнате");
+                        CreateRoomButton.IsEnabled = false;
+                        var myRoom = _myRooms.FirstOrDefault(r => r.Id == roomId);
+                        DeleteRoomButton.IsEnabled = myRoom != null && myRoom.IsMyRoom;
+                    }
                     _ = GetRooms();
                     break;
 
@@ -348,6 +360,29 @@ namespace SeaBattle.Client
         private async void RefreshRoomsButton_Click(object sender, RoutedEventArgs e)
         {
             await GetRooms();
+        }
+
+        private void ReconnectToGameButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(App.PendingReconnectRoomId))
+            {
+                MessageBox.Show("Нет доступной игры для переподключения.", "Информация",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var roomId = App.PendingReconnectRoomId;
+            App.PendingReconnectRoomId = null;
+            var reconnectBtn = FindName("ReconnectToGameButton") as System.Windows.Controls.Button;
+            if (reconnectBtn != null)
+                reconnectBtn.Visibility = Visibility.Collapsed;
+
+            var window = Window.GetWindow(this);
+            if (window is MainWindow mainWindow)
+            {
+                var gamePage = new GamePage(roomId, isReconnect: true);
+                mainWindow.Content = gamePage;
+            }
         }
 
         private void AvailableRoomsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

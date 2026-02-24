@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -148,6 +148,11 @@ namespace SeaBattle.Server
         public GameRoom GetPlayerRoom(string playerId)
         {
             return _rooms.Values.FirstOrDefault(r => r.ContainsPlayer(playerId));
+        }
+
+        public GameRoom GetRoom(string roomId)
+        {
+            return _rooms.TryGetValue(roomId, out var room) ? room : null;
         }
 
         public bool StartGame(string roomId)

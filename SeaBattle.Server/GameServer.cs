@@ -71,6 +71,10 @@ namespace SeaBattle.Server
         private LobbyManager _lobbyManager;
         private ConcurrentDictionary<string, GameSession> _gameSessions =
             new ConcurrentDictionary<string, GameSession>();
+        private ConcurrentDictionary<string, CancellationTokenSource> _turnTimers =
+            new ConcurrentDictionary<string, CancellationTokenSource>();
+        private ConcurrentDictionary<string, DateTime> _turnStartedAt =
+            new ConcurrentDictionary<string, DateTime>();
         private SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
 
         public GameServer()
@@ -238,8 +242,29 @@ namespace SeaBattle.Server
                     }
                     else
                     {
-                        playerToRemove.Status = PlayerStatus.Offline;
-                        _lobbyManager.LeaveRoom(playerToRemove.Id);
+                        bool gameInProgress = _gameSessions.TryGetValue(room.Id, out var session) && session.Status == GameSessionStatus.InProgress;
+                        if (gameInProgress)
+                        {
+                            // Игра идёт — не выкидываем из комнаты, игрок может переподключиться до конца своего следующего хода
+                            _playerStreams.TryRemove(playerToRemove.Id, out _);
+                            playerToRemove.ConnectionId = null;
+                            playerToRemove.Status = PlayerStatus.Offline;
+                            var opponent = room.GetOpponent(playerToRemove.Id);
+                            if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var oppStream))
+                            {
+                                await SendMessageAsync(oppStream, new NetworkMessage
+                                {
+                                    Type = MessageType.OpponentDisconnected,
+                                    SenderId = "SERVER",
+                                    Data = JObject.FromObject(new { PlayerName = playerToRemove.Name })
+                                });
+                            }
+                        }
+                        else
+                        {
+                            playerToRemove.Status = PlayerStatus.Offline;
+                            _lobbyManager.LeaveRoom(playerToRemove.Id);
+                        }
                     }
 
                     await Task.Delay(5);
@@ -374,6 +399,9 @@ namespace SeaBattle.Server
                     case MessageType.GameOver:
                         return await HandleGameOver(message, connectionId);
 
+                    case MessageType.ReconnectToGame:
+                        return await HandleReconnectToGame(message, connectionId);
+
                     case MessageType.Ping:
                         return new NetworkMessage { Type = MessageType.Pong, SenderId = "SERVER" };
 
@@ -477,6 +505,47 @@ namespace SeaBattle.Server
             }
             else
             {
+                // Проверяем, не переподключается ли игрок к прерванной игре
+                GameRoom reconnectRoom = null;
+                ConnectedPlayer disconnectedPlayer = null;
+                foreach (var r in _lobbyManager.GetAllRooms())
+                {
+                    if (r.Status != GameRoomStatus.InGame) continue;
+                    if (r.Creator != null && r.Creator.Name == data.PlayerName && !_playerStreams.ContainsKey(r.Creator.Id))
+                    {
+                        reconnectRoom = r;
+                        disconnectedPlayer = r.Creator;
+                        break;
+                    }
+                    if (r.Player2 != null && r.Player2.Name == data.PlayerName && !_playerStreams.ContainsKey(r.Player2.Id))
+                    {
+                        reconnectRoom = r;
+                        disconnectedPlayer = r.Player2;
+                        break;
+                    }
+                }
+
+                if (reconnectRoom != null && disconnectedPlayer != null)
+                {
+                    disconnectedPlayer.ConnectionId = connectionId;
+                    disconnectedPlayer.Status = PlayerStatus.InGame;
+                    disconnectedPlayer.LastSeen = DateTime.UtcNow;
+                    playerId = disconnectedPlayer.Id;
+
+                    return new NetworkMessage
+                    {
+                        Type = MessageType.ConnectResponse,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(new ConnectResponseData
+                        {
+                            PlayerId = playerId,
+                            Message = $"Добро пожаловать, {data.PlayerName}! У вас есть незавершённая игра.",
+                            Success = true,
+                            PendingReconnectRoomId = reconnectRoom.Id
+                        })
+                    };
+                }
+
                 // Новый игрок
                 playerId = Guid.NewGuid().ToString();
                 Console.WriteLine($"Новый игрок {data.PlayerName} с ID: {playerId}");
@@ -789,47 +858,70 @@ namespace SeaBattle.Server
             }
 
             var room = _lobbyManager.GetPlayerRoom(player.Id);
+            bool canReconnect = false;
+            string reconnectRoomId = null;
+
             if (room != null)
             {
                 var opponent = room.GetOpponent(player.Id);
-                _lobbyManager.LeaveRoom(player.Id);
+                bool gameInProgress = _gameSessions.TryGetValue(room.Id, out var session) && session.Status == GameSessionStatus.InProgress;
 
-                Console.WriteLine($"Игрок {player.Name} покинул комнату");
-
-                // Обновляем список комнат для всех
-                BroadcastRoomsList();
-
-                if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
+                if (gameInProgress)
                 {
-                    var leaveNotification = new NetworkMessage
+                    canReconnect = true;
+                    reconnectRoomId = room.Id;
+
+                    if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
                     {
-                        Type = MessageType.PlayerLeftRoom,
-                        SenderId = "SERVER",
-                        Data = JObject.FromObject(new
+                        await SendMessageAsync(opponentStream, new NetworkMessage
                         {
-                            PlayerId = player.Id,
-                            PlayerName = player.Name,
-                            RoomId = room.Id,
-                            Message = "Игрок покинул комнату"
-                        })
-                    };
-                    await SendMessageAsync(opponentStream, leaveNotification);
+                            Type = MessageType.OpponentDisconnected,
+                            SenderId = "SERVER",
+                            Data = JObject.FromObject(new { PlayerName = player.Name })
+                        });
+                    }
                 }
+                else
+                {
+                    _lobbyManager.LeaveRoom(player.Id);
+                    Console.WriteLine($"Игрок {player.Name} покинул комнату");
+
+                    if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
+                    {
+                        var leaveNotification = new NetworkMessage
+                        {
+                            Type = MessageType.PlayerLeftRoom,
+                            SenderId = "SERVER",
+                            Data = JObject.FromObject(new
+                            {
+                                PlayerId = player.Id,
+                                PlayerName = player.Name,
+                                RoomId = room.Id,
+                                Message = "Игрок покинул комнату"
+                            })
+                        };
+                        await SendMessageAsync(opponentStream, leaveNotification);
+                    }
+                }
+
+                BroadcastRoomsList();
             }
             else
             {
-                // Если игрок не был в комнате, отправляем ему обновленный список комнат
                 BroadcastRoomsList();
             }
+
+            var responseData = new
+            {
+                Message = canReconnect ? "Вы вышли из игры. Можете переподключиться." : "Вы покинули комнату",
+                PendingReconnectRoomId = canReconnect ? reconnectRoomId : (string)null
+            };
 
             return new NetworkMessage
             {
                 Type = MessageType.JoinedRoom,
                 SenderId = "SERVER",
-                Data = JObject.FromObject(new
-                {
-                    Message = "Вы покинули комнату"
-                })
+                Data = JObject.FromObject(responseData)
             };
         }
 
@@ -1000,8 +1092,8 @@ namespace SeaBattle.Server
                 gameSession.Status = GameSessionStatus.InProgress;
                 gameSession.CurrentTurnPlayerId = new Random().Next(2) == 0 ? room.Creator.Id : room.Player2.Id;
                 
-                // Просто отправляем состояние игры без повторной отправки StartGame
                 await SendGameStateToBothPlayers(gameSession, room);
+                StartTurnTimer(room.Id);
             }
 
             return null;
@@ -1135,6 +1227,7 @@ namespace SeaBattle.Server
                     await SendMessageAsync(loserStream, loserMessage);
                 }
 
+                CancelTurnTimer(room.Id);
                 _lobbyManager.RemoveRoom(room.Id);
                 _gameSessions.TryRemove(room.Id, out _);
                 BroadcastRoomsList();
@@ -1168,6 +1261,7 @@ namespace SeaBattle.Server
             if (opponentBoard.HasNoShipCellsLeft())
             {
                 gameSession.Status = GameSessionStatus.Finished;
+                CancelTurnTimer(room.Id);
                 var gameOverData = new GameOverData
                 {
                     WinnerId = player.Id,
@@ -1212,7 +1306,7 @@ namespace SeaBattle.Server
                     {
                         NextPlayerId = opponent.Id,
                         PreviousPlayerId = player.Id,
-                        TimeLeft = 30
+                        TimeLeft = GameConstants.TurnTimeSeconds
                     })
                 };
 
@@ -1225,6 +1319,13 @@ namespace SeaBattle.Server
                 {
                     await SendMessageAsync(oppStream, turnChangeMessage);
                 }
+
+                StartTurnTimer(room.Id);
+            }
+            else
+            {
+                // Попадание — ход остаётся у того же игрока, таймер сбрасываем
+                StartTurnTimer(room.Id);
             }
 
             return null;
@@ -1272,6 +1373,7 @@ namespace SeaBattle.Server
                     await SendMessageAsync(opponentStream, gameOverMessage);
                 }
 
+                CancelTurnTimer(room.Id);
                 _lobbyManager.RemoveRoom(room.Id);
                 _gameSessions.TryRemove(room.Id, out _);
 
@@ -1279,6 +1381,212 @@ namespace SeaBattle.Server
             }
 
             return null;
+        }
+
+        private async Task<NetworkMessage> HandleReconnectToGame(NetworkMessage message, string connectionId)
+        {
+            var player = _players.Values.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null)
+            {
+                return new NetworkMessage
+                {
+                    Type = MessageType.Error,
+                    Data = JObject.FromObject(new { Message = "Игрок не найден" })
+                };
+            }
+
+            var roomId = message.Data?["RoomId"]?.ToString() ?? message.Data?["roomId"]?.ToString();
+            if (string.IsNullOrEmpty(roomId))
+            {
+                return new NetworkMessage
+                {
+                    Type = MessageType.Error,
+                    Data = JObject.FromObject(new { Message = "Не указана комната" })
+                };
+            }
+
+            var room = _lobbyManager.GetRoom(roomId);
+            if (room == null || !room.ContainsPlayer(player.Id))
+            {
+                return new NetworkMessage
+                {
+                    Type = MessageType.Error,
+                    Data = JObject.FromObject(new { Message = "Комната не найдена или вы не участник этой игры" })
+                };
+            }
+
+            if (!_gameSessions.TryGetValue(roomId, out var gameSession) || gameSession.Status != GameSessionStatus.InProgress)
+            {
+                return new NetworkMessage
+                {
+                    Type = MessageType.Error,
+                    Data = JObject.FromObject(new { Message = "Игра в этой комнате уже завершена" })
+                };
+            }
+
+            var player1Board = gameSession.GetPlayerBoard(room.Creator.Id);
+            var player2Board = gameSession.GetPlayerBoard(room.Player2.Id);
+            if (player1Board == null || player2Board == null)
+            {
+                return new NetworkMessage
+                {
+                    Type = MessageType.Error,
+                    Data = JObject.FromObject(new { Message = "Ошибка состояния игры" })
+                };
+            }
+
+            int timeLeft = GetTimeLeftForRoom(roomId);
+            GameState stateForReconnecting;
+            if (room.Creator.Id == player.Id)
+            {
+                stateForReconnecting = new GameState
+                {
+                    RoomId = room.Id,
+                    MyBoard = player1Board,
+                    EnemyBoard = player2Board,
+                    CurrentTurnPlayerId = gameSession.CurrentTurnPlayerId,
+                    MyPlayerId = room.Creator.Id,
+                    EnemyPlayerId = room.Player2.Id,
+                    EnemyPlayerName = room.Player2.Name,
+                    Phase = "InGame",
+                    TimeLeft = timeLeft
+                };
+            }
+            else
+            {
+                stateForReconnecting = new GameState
+                {
+                    RoomId = room.Id,
+                    MyBoard = player2Board,
+                    EnemyBoard = player1Board,
+                    CurrentTurnPlayerId = gameSession.CurrentTurnPlayerId,
+                    MyPlayerId = room.Player2.Id,
+                    EnemyPlayerId = room.Creator.Id,
+                    EnemyPlayerName = room.Creator.Name,
+                    Phase = "InGame",
+                    TimeLeft = timeLeft
+                };
+            }
+
+            if (_playerStreams.TryGetValue(player.Id, out var playerStream))
+            {
+                await SendMessageAsync(playerStream, new NetworkMessage
+                {
+                    Type = MessageType.GameState,
+                    SenderId = "SERVER",
+                    Data = JObject.FromObject(stateForReconnecting)
+                });
+            }
+
+            var opponent = room.GetOpponent(player.Id);
+            if (opponent != null && _playerStreams.TryGetValue(opponent.Id, out var opponentStream))
+            {
+                await SendMessageAsync(opponentStream, new NetworkMessage
+                {
+                    Type = MessageType.OpponentReconnected,
+                    SenderId = "SERVER",
+                    Data = JObject.FromObject(new { PlayerName = player.Name })
+                });
+            }
+
+            return null;
+        }
+
+        private void CancelTurnTimer(string roomId)
+        {
+            if (_turnTimers.TryRemove(roomId, out var cts))
+            {
+                try { cts.Cancel(); } catch { }
+                try { cts.Dispose(); } catch { }
+            }
+            _turnStartedAt.TryRemove(roomId, out _);
+        }
+
+        // Оставшееся время хода в секундах (для переподключения и отображения без сброса)
+        private int GetTimeLeftForRoom(string roomId)
+        {
+            if (!_turnStartedAt.TryGetValue(roomId, out var startedAt))
+                return GameConstants.TurnTimeSeconds;
+            var elapsed = (DateTime.UtcNow - startedAt).TotalSeconds;
+            var left = GameConstants.TurnTimeSeconds - (int)elapsed;
+            return Math.Max(0, Math.Min(left, GameConstants.TurnTimeSeconds));
+        }
+
+        private void StartTurnTimer(string roomId)
+        {
+            CancelTurnTimer(roomId);
+            var cts = new CancellationTokenSource();
+            if (!_turnTimers.TryAdd(roomId, cts))
+            {
+                cts.Dispose();
+                return;
+            }
+            _turnStartedAt[roomId] = DateTime.UtcNow;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(GameConstants.TurnTimeSeconds), cts.Token);
+                }
+                catch (OperationCanceledException) // Если таймер отменили - выходим
+                {
+                    return;
+                }
+
+                var room = _lobbyManager.GetRoom(roomId);
+                if (room == null) return;
+
+                // Проверяем, что игра все еще активна
+                if (!_gameSessions.TryGetValue(roomId, out var gameSession) || gameSession.Status != GameSessionStatus.InProgress)
+                    return;
+                if (!_turnTimers.TryRemove(roomId, out _))
+                    return;
+                _turnStartedAt.TryRemove(roomId, out _);
+
+                // Тот, чей ход сейчас - проигрывает
+                var loserId = gameSession.CurrentTurnPlayerId;
+                var opponent = room.GetOpponent(loserId);
+                if (opponent == null) return;
+
+                gameSession.Status = GameSessionStatus.Finished;
+
+                var loser = loserId == room.Creator.Id ? room.Creator : room.Player2;
+                var winner = opponent;
+
+                var gameOverData = new GameOverData
+                {
+                    WinnerId = winner.Id,
+                    WinnerName = winner.Name,
+                    LoserId = loser.Id,
+                    LoserName = loser.Name,
+                    IsSurrender = false,
+                    IsTimeout = true
+                };
+
+                if (_playerStreams.TryGetValue(winner.Id, out var winnerStream))
+                {
+                    await SendMessageAsync(winnerStream, new NetworkMessage
+                    {
+                        Type = MessageType.GameOver,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(gameOverData)
+                    });
+                }
+                if (_playerStreams.TryGetValue(loser.Id, out var loserStream))
+                {
+                    await SendMessageAsync(loserStream, new NetworkMessage
+                    {
+                        Type = MessageType.GameOver,
+                        SenderId = "SERVER",
+                        Data = JObject.FromObject(gameOverData)
+                    });
+                }
+
+                _lobbyManager.RemoveRoom(roomId);
+                _gameSessions.TryRemove(roomId, out _);
+                BroadcastRoomsList();
+            });
         }
 
         private async Task SendGameStateToBothPlayers(GameSession gameSession, GameRoom room)
@@ -1301,7 +1609,8 @@ namespace SeaBattle.Server
                 MyPlayerId = room.Creator.Id,
                 EnemyPlayerId = room.Player2.Id,
                 EnemyPlayerName = room.Player2.Name,
-                Phase = "InGame"
+                Phase = "InGame",
+                TimeLeft = GameConstants.TurnTimeSeconds
             };
 
             if (_playerStreams.TryGetValue(room.Creator.Id, out var creatorStream))
@@ -1328,7 +1637,8 @@ namespace SeaBattle.Server
                 MyPlayerId = room.Player2.Id,
                 EnemyPlayerId = room.Creator.Id,
                 EnemyPlayerName = room.Creator.Name,
-                Phase = "InGame"
+                Phase = "InGame",
+                TimeLeft = GameConstants.TurnTimeSeconds
             };
 
             if (_playerStreams.TryGetValue(room.Player2.Id, out var player2Stream))

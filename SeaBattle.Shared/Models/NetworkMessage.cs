@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
@@ -44,6 +44,9 @@ namespace SeaBattle.Shared.Models
         GameOver = 114,
         TurnChanged = 115,
         TimerUpdate = 116,
+        ReconnectToGame = 117,
+        OpponentDisconnected = 118,
+        OpponentReconnected = 119,
 
         // Игра
         PlaceShips = 200,
@@ -130,6 +133,9 @@ namespace SeaBattle.Shared.Models
 
         [JsonProperty("success")]
         public bool Success { get; set; }
+
+        [JsonProperty("pendingReconnectRoomId")]
+        public string PendingReconnectRoomId { get; set; }
     }
 
     public class ChatMessageData
@@ -213,6 +219,11 @@ namespace SeaBattle.Shared.Models
         public int TimeLeft { get; set; }
     }
 
+    public static class GameConstants
+    {
+        public const int TurnTimeSeconds = 120;
+    }
+
     public class GameOverData
     {
         [JsonProperty("winnerId")]
@@ -229,6 +240,9 @@ namespace SeaBattle.Shared.Models
 
         [JsonProperty("isSurrender")]
         public bool IsSurrender { get; set; }
+
+        [JsonProperty("isTimeout")]
+        public bool IsTimeout { get; set; }
     }
 
    

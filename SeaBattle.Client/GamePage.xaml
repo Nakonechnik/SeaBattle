@@ -5,6 +5,7 @@
       Title="Морской бой - Игра"
       Background="#1E1E1E"
       Width="900" Height="700"
+      Loaded="Page_Loaded"
       Unloaded="Page_Unloaded">
 
     <Page.Resources>
@@ -51,6 +52,17 @@
                         <TextBlock x:Name="StatusText" 
                                   Text="Расстановка кораблей" 
                                   Foreground="Yellow"
+                                  FontWeight="SemiBold"/>
+                    </Border>
+                    <Border x:Name="TimerBorder" 
+                            Background="#3D3D40" 
+                            CornerRadius="3" 
+                            Padding="8,4"
+                            Margin="10,0,0,0"
+                            Visibility="Collapsed">
+                        <TextBlock x:Name="TimerText" 
+                                  Text="2:00" 
+                                  Foreground="#AAAAAA"
                                   FontWeight="SemiBold"/>
                     </Border>
                 </StackPanel>

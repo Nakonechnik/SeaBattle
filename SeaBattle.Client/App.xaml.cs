@@ -1,4 +1,4 @@
-﻿using System.Net.Sockets;
+using System.Net.Sockets;
 using System.Threading;
 using System.Windows;
 
@@ -10,6 +10,7 @@ namespace SeaBattle.Client
         public static NetworkStream Stream { get; set; }
         public static string PlayerId { get; set; }
         public static string PlayerName { get; set; }
+        public static string PendingReconnectRoomId { get; set; }
         public static CancellationTokenSource Cts { get; set; } = new CancellationTokenSource();
     }
 }

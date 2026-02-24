@@ -56,12 +56,12 @@ namespace SeaBattle.Client
                     if (data.Success)
                     {
                         App.PlayerId = data.PlayerId;
+                        App.PendingReconnectRoomId = data.PendingReconnectRoomId;
                         StatusText.Text = $"Подключено как {playerName}";
                         ConnectionStatus.Text = "Подключено";
                         ConnectionStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
                         PlayerNameText.Text = playerName;
 
-                        // Переходим в лобби (один общий ReadLoop — в MainWindow, чтобы не было двух читателей одного потока)
                         var lobbyPage = new LobbyPage();
                         this.Content = lobbyPage;
                         _ = Task.Run((Func<Task>)ReadLoop);

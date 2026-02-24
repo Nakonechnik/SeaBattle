@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Newtonsoft.Json.Linq;
 using SeaBattle.Shared.Models;
 
@@ -24,11 +25,15 @@ namespace SeaBattle.Client
         private string _enemyPlayerName;
         private bool _gameOverHandled;
         private bool _placeShipHorizontal = true;
+        private DispatcherTimer _turnTimer;
+        private int _secondsLeft;
+        private bool _isReconnect;
 
-        public GamePage(string roomId)
+        public GamePage(string roomId, bool isReconnect = false)
         {
             InitializeComponent();
             _roomId = roomId;
+            _isReconnect = isReconnect;
             _myBoard = new GameBoard();
             _enemyBoard = new GameBoard();
             _gameStarted = false;
@@ -39,10 +44,20 @@ namespace SeaBattle.Client
             PlayerNameText.Text = App.PlayerName;
             EnemyTitleText.Text = "ПОЛЕ ПРОТИВНИКА";
 
+            _turnTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _turnTimer.Tick += TurnTimer_Tick;
+
             UpdateShipsStatus();
             UpdateUIState();
+        }
 
-            // Один общий ReadLoop в MainWindow
+        private async void Page_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_isReconnect)
+            {
+                _isReconnect = false;
+                await SendReconnectToGameAsync();
+            }
         }
 
         public void ProcessServerMessage(NetworkMessage message)
@@ -82,6 +97,14 @@ namespace SeaBattle.Client
                     case MessageType.PlayerLeftRoom:
                         HandlePlayerLeftRoom(message);
                         break;
+
+                    case MessageType.OpponentDisconnected:
+                        HandleOpponentDisconnected(message);
+                        break;
+
+                    case MessageType.OpponentReconnected:
+                        HandleOpponentReconnected(message);
+                        break;
                 }
             }
             catch (Exception ex)
@@ -114,8 +137,20 @@ namespace SeaBattle.Client
                 _isMyTurn = gameState.CurrentTurnPlayerId == App.PlayerId;
                 _gameStarted = true;
 
+                // Применяем актуальные доски (важно при переподключении)
+                if (gameState.MyBoard != null)
+                    _myBoard = gameState.MyBoard;
+                if (gameState.EnemyBoard != null)
+                    _enemyBoard = gameState.EnemyBoard;
+
                 Dispatcher.Invoke(() =>
                 {
+                    MyBoardControl.GameBoard = _myBoard;
+                    EnemyBoardControl.GameBoard = _enemyBoard;
+                    MyBoardControl.UpdateBoard();
+                    EnemyBoardControl.UpdateBoard();
+                    UpdateShipsStatus();
+
                     EnemyTitleText.Text = $"ПОЛЕ {_enemyPlayerName?.ToUpper()}";
 
                     IsEnemyBoardEnabled = _isMyTurn;
@@ -128,6 +163,17 @@ namespace SeaBattle.Client
                     ClearBoardButton.IsEnabled = false;
                     OrientationButton.IsEnabled = false;
                     ReadyButton.IsEnabled = false;
+
+                    if (_isMyTurn)
+                    {
+                        StartTurnTimer(gameState.TimeLeft > 0 ? gameState.TimeLeft : GameConstants.TurnTimeSeconds);
+                        TurnStatusText.Text = "Выберите цель для атаки";
+                    }
+                    else
+                    {
+                        StopTurnTimer();
+                        TurnStatusText.Text = $"Ожидание хода {_enemyPlayerName}";
+                    }
                 });
             }
             catch (Exception ex)
@@ -199,6 +245,7 @@ namespace SeaBattle.Client
                         TurnStatusText.Text = result.IsDestroyed
                             ? $"Корабль уничтожен! (размер: {result.ShipSize}) — стреляйте ещё"
                             : "Попадание! Стреляйте ещё раз";
+                        Dispatcher.Invoke(() => StartTurnTimer(GameConstants.TurnTimeSeconds));
                     }
                 }
                 else
@@ -264,6 +311,7 @@ namespace SeaBattle.Client
             if (_gameOverHandled) return;
             _gameOverHandled = true;
 
+            StopTurnTimer();
             IsEnemyBoardEnabled = false;
             MyBoardControl.IsEnabled = false;
             SurrenderButton.IsEnabled = false;
@@ -304,6 +352,7 @@ namespace SeaBattle.Client
                     StatusText.Foreground = Brushes.LightGreen;
                     TurnStatusText.Text = "Выберите цель для атаки";
                     TurnStatusText.Foreground = Brushes.LightGreen;
+                    StartTurnTimer(data.TimeLeft > 0 ? data.TimeLeft : GameConstants.TurnTimeSeconds);
                 }
                 else
                 {
@@ -311,6 +360,7 @@ namespace SeaBattle.Client
                     StatusText.Foreground = Brushes.Orange;
                     TurnStatusText.Text = $"Ожидание хода {_enemyPlayerName}";
                     TurnStatusText.Foreground = Brushes.Orange;
+                    StopTurnTimer();
                 }
             }
             catch (Exception ex)
@@ -318,6 +368,40 @@ namespace SeaBattle.Client
                 MessageBox.Show($"Ошибка обработки смены хода: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void StartTurnTimer(int secondsLeft)
+        {
+            _secondsLeft = secondsLeft;
+            TimerBorder.Visibility = Visibility.Visible;
+            UpdateTimerText();
+            _turnTimer.Stop();
+            _turnTimer.Start();
+        }
+
+        private void StopTurnTimer()
+        {
+            _turnTimer.Stop();
+            TimerBorder.Visibility = Visibility.Collapsed;
+        }
+
+        private void TurnTimer_Tick(object sender, EventArgs e)
+        {
+            _secondsLeft--;
+            UpdateTimerText();
+            if (_secondsLeft <= 0)
+            {
+                _turnTimer.Stop();
+                TimerBorder.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void UpdateTimerText()
+        {
+            int min = Math.Max(0, _secondsLeft) / 60;
+            int sec = Math.Max(0, _secondsLeft) % 60;
+            TimerText.Text = $"Осталось: {min}:{sec:D2}";
+            TimerText.Foreground = _secondsLeft <= 30 ? Brushes.OrangeRed : Brushes.White;
         }
 
         private void HandleGameOver(NetworkMessage message)
@@ -341,9 +425,15 @@ namespace SeaBattle.Client
                 StatusText.Foreground = isWinner ? Brushes.Gold : Brushes.LightCoral;
                 GamePhaseText.Text = "Игра окончена";
 
-                string gameOverMessage = data.IsSurrender
-                    ? (isWinner ? "Противник сдался. Вы победили!" : "Вы сдались. Игра окончена.")
-                    : (isWinner ? "Поздравляем! Вы победили! Все корабли противника уничтожены!" : $"Вы проиграли. Все ваши корабли уничтожены. Победитель: {data.WinnerName}");
+                StopTurnTimer();
+
+                string gameOverMessage;
+                if (data.IsTimeout)
+                    gameOverMessage = isWinner ? "Противник не успел сделать ход. Вы победили!" : "Время вышло. Вы проиграли.";
+                else if (data.IsSurrender)
+                    gameOverMessage = isWinner ? "Противник сдался. Вы победили!" : "Вы сдались. Игра окончена.";
+                else
+                    gameOverMessage = isWinner ? "Поздравляем! Вы победили! Все корабли противника уничтожены!" : $"Вы проиграли. Все ваши корабли уничтожены. Победитель: {data.WinnerName}";
 
                 MessageBox.Show(gameOverMessage, "Игра окончена",
                               MessageBoxButton.OK, isWinner ? MessageBoxImage.Information : MessageBoxImage.Exclamation);
@@ -364,11 +454,54 @@ namespace SeaBattle.Client
 
         private void HandlePlayerLeftRoom(NetworkMessage message)
         {
+            StopTurnTimer();
             string playerName = message.Data?["PlayerName"]?.ToString() ?? "Противник";
             MessageBox.Show($"{playerName} покинул игру!", "Информация",
                           MessageBoxButton.OK, MessageBoxImage.Information);
 
             ReturnToLobby();
+        }
+
+        private void HandleOpponentDisconnected(NetworkMessage message)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                string playerName = message.Data?["PlayerName"]?.ToString() ?? "Противник";
+                StatusText.Text = $"{playerName} отключился";
+                StatusText.Foreground = Brushes.Orange;
+                TurnStatusText.Text = "Противник может переподключиться до конца своего следующего хода. Ожидайте.";
+            });
+        }
+
+        private void HandleOpponentReconnected(NetworkMessage message)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                string playerName = message.Data?["PlayerName"]?.ToString() ?? "Противник";
+                StatusText.Text = _isMyTurn ? "Ваш ход!" : $"Ход {playerName}";
+                StatusText.Foreground = _isMyTurn ? Brushes.LightGreen : Brushes.Orange;
+                TurnStatusText.Text = $"{playerName} переподключился.";
+            });
+        }
+
+        private async Task SendReconnectToGameAsync()
+        {
+            try
+            {
+                var message = new NetworkMessage
+                {
+                    Type = MessageType.ReconnectToGame,
+                    SenderId = App.PlayerId,
+                    Data = JObject.FromObject(new { RoomId = _roomId })
+                };
+                await SendMessageAsync(message);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка переподключения: {ex.Message}", "Ошибка",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                ReturnToLobby();
+            }
         }
 
         private void MyBoardCellClicked(object sender, CellClickEventArgs e)

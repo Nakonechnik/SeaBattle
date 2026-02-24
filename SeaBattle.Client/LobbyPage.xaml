@@ -1,4 +1,4 @@
-﻿<Page x:Class="SeaBattle.Client.LobbyPage"
+<Page x:Class="SeaBattle.Client.LobbyPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       Title="Игровое лобби"
@@ -176,6 +176,14 @@
                            Click="RefreshRoomsButton_Click"
                            Height="35"
                            Margin="0,0,0,10"/>
+
+                    <Button x:Name="ReconnectToGameButton"
+                           Content="Переподключиться к игре"
+                           Click="ReconnectToGameButton_Click"
+                           Height="35"
+                           Margin="0,0,0,10"
+                           Background="#27AE60"
+                           Visibility="Collapsed"/>
 
                     <Button x:Name="BackButton"
                            Content="Назад"
