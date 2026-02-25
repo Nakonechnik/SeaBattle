@@ -4,7 +4,7 @@
       xmlns:local="clr-namespace:SeaBattle.Client"
       Title="Морской бой - Игра"
       Background="#1E1E1E"
-      Width="900" Height="700"
+      Width="1050" Height="700"
       Loaded="Page_Loaded"
       Unloaded="Page_Unloaded">
 
@@ -22,7 +22,8 @@
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="480*"/>
+            <RowDefinition Height="25*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -69,12 +70,14 @@
             </DockPanel>
         </Border>
 
-        <!-- Игровые поля -->
-        <Grid Grid.Row="1">
+        <!-- Игровые поля и чат -->
+        <Grid Grid.Row="1" Grid.RowSpan="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Свое поле -->
@@ -98,36 +101,36 @@
                                        IsEnabled="True"
                                        CellClicked="MyBoardCellClicked"/>
 
-                <StackPanel Orientation="Horizontal" 
-                           HorizontalAlignment="Center" 
-                           Margin="0,20,0,0">
+                <WrapPanel HorizontalAlignment="Center" 
+                           Margin="0,10,0,0"
+                           MaxWidth="400">
                     <Button x:Name="RandomPlaceButton" 
                            Content="Случайная" 
                            Click="RandomPlaceButton_Click"
-                           Width="100" 
+                           MinWidth="80" 
                            Margin="5"/>
 
                     <Button x:Name="ClearBoardButton" 
                            Content="Очистить" 
                            Click="ClearBoardButton_Click"
-                           Width="100" 
+                           MinWidth="80" 
                            Margin="5"/>
 
                     <Button x:Name="OrientationButton" 
                            Content="Горизонтально" 
                            Click="OrientationButton_Click"
-                           Width="110" 
+                           MinWidth="100" 
                            Margin="5"
                            ToolTip="Ориентация следующего корабля. Нажмите, чтобы переключить."/>
 
                     <Button x:Name="ReadyButton" 
                            Content="Готов" 
                            Click="ReadyButton_Click"
-                           Width="100" 
+                           MinWidth="80" 
                            Margin="5"
                            Background="#27AE60"
                            IsEnabled="False"/>
-                </StackPanel>
+                </WrapPanel>
             </StackPanel>
 
             <!-- Разделитель -->
@@ -137,7 +140,7 @@
                     Margin="20,0"/>
 
             <!-- Поле противника -->
-            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+            <StackPanel Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Top">
                 <Border Background="#2D2D30" 
                         CornerRadius="3" 
                         Padding="10,5" 
@@ -178,10 +181,59 @@
                        Background="#E74C3C"
                        IsEnabled="False"/>
             </StackPanel>
+
+            <!-- Разделитель -->
+            <Border Grid.Column="3" 
+                    Width="2" 
+                    Background="#555555" 
+                    Margin="15,0"/>
+
+            <!-- Чат -->
+            <Border Grid.Column="4" 
+                    Background="#2D2D30" 
+                    CornerRadius="5" 
+                    Padding="10"
+                    Margin="15,0,0,0"
+                    VerticalAlignment="Stretch">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" 
+                              Text="Чат" 
+                              Foreground="#007ACC" 
+                              FontSize="14" 
+                              FontWeight="Bold"
+                              Margin="0,0,0,8"/>
+                    <ListBox x:Name="ChatListBox"
+                             Grid.Row="1"
+                             Background="#1E1E1E"
+                             BorderThickness="0"
+                             Foreground="White"
+                             FontSize="12"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBox x:Name="ChatInputBox"
+                                 Width="130"
+                                 Height="30"
+                                 VerticalContentAlignment="Center"
+                                 KeyDown="ChatInputBox_KeyDown"/>
+                        <Button x:Name="ChatSendButton"
+                                Content="Отправить"
+                                Click="ChatSendButton_Click"
+                                Width="80"
+                                Height="30"
+                                Margin="5,0,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Нижняя панель -->
-        <Border Grid.Row="2" 
+        <Border Grid.Row="3" 
                 Style="{StaticResource GameStatusStyle}"
                 Margin="0,20,0,0">
             <DockPanel>

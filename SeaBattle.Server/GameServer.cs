@@ -365,7 +365,7 @@ namespace SeaBattle.Server
                         return HandleConnect(message, connectionId, stream);
 
                     case MessageType.ChatMessage:
-                        return HandleChatMessage(message);
+                        return await HandleChatMessage(message, connectionId);
 
                     case MessageType.CreateRoom:
                         return await HandleCreateRoom(message, connectionId);
@@ -577,21 +577,35 @@ namespace SeaBattle.Server
             };
         }
 
-        private NetworkMessage HandleChatMessage(NetworkMessage message)
+        private async Task<NetworkMessage> HandleChatMessage(NetworkMessage message, string connectionId)
         {
-            var data = message.Data.ToObject<ChatMessageData>();
-            Console.WriteLine($"Чат от {message.SenderId}: {data.Message}");
+            var data = message.Data?.ToObject<ChatMessageData>();
+            if (data == null || string.IsNullOrWhiteSpace(data.Message))
+                return null;
 
-            return new NetworkMessage
+            var player = _players.Values.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null) return null;
+
+            var room = _lobbyManager.GetPlayerRoom(player.Id);
+            if (room == null) return null;
+
+            var opponent = room.GetOpponent(player.Id);
+            if (opponent == null || !_playerStreams.TryGetValue(opponent.Id, out var opponentStream))
+                return null;
+
+            var chatPayload = new ChatMessageData
+            {
+                Message = data.Message.Trim(),
+                SenderName = player.Name
+            };
+            var chatMsg = new NetworkMessage
             {
                 Type = MessageType.ChatMessage,
-                SenderId = "SERVER",
-                Data = JObject.FromObject(new
-                {
-                    Message = $"Сообщение получено: {data.Message}",
-                    OriginalSender = data.SenderName
-                })
+                SenderId = player.Id,
+                Data = JObject.FromObject(chatPayload)
             };
+            await SendMessageAsync(opponentStream, chatMsg);
+            return null;
         }
 
         private async Task<NetworkMessage> HandleCreateRoom(NetworkMessage message, string connectionId)
