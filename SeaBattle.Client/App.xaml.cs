@@ -6,6 +6,8 @@ namespace SeaBattle.Client
 {
     public partial class App : Application
     {
+        public const int DefaultPort = 8888;
+
         public static TcpClient TcpClient { get; set; }
         public static NetworkStream Stream { get; set; }
         public static string PlayerId { get; set; }

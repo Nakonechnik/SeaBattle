@@ -21,7 +21,6 @@ namespace SeaBattle.Client
             try
             {
                 string serverAddress = ServerAddressTextBox.Text.Trim();
-                int port = int.Parse(PortTextBox.Text.Trim());
                 string playerName = PlayerNameTextBox.Text.Trim();
 
                 if (string.IsNullOrEmpty(playerName))
@@ -35,7 +34,7 @@ namespace SeaBattle.Client
 
                 // Создаем подключение
                 App.TcpClient = new TcpClient();
-                await App.TcpClient.ConnectAsync(serverAddress, port);
+                await App.TcpClient.ConnectAsync(serverAddress, App.DefaultPort);
                 App.Stream = App.TcpClient.GetStream();
                 App.PlayerName = playerName;
 

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -101,6 +101,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="GameServer.cs" />
+    <Compile Include="GameServer.GameHandlers.cs" />
+    <Compile Include="GameServer.LobbyHandlers.cs" />
+    <Compile Include="GameServer.Network.cs" />
+    <Compile Include="GameServer.TurnTimer.cs" />
+    <Compile Include="GameSession.cs" />
     <Compile Include="LobbyManager.cs" />
     <Compile Include="Models\ConnectedPlayer.cs" />
     <Compile Include="Models\GameRoom.cs" />

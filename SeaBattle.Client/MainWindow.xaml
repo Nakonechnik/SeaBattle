@@ -1,4 +1,4 @@
-﻿<Window x:Class="SeaBattle.Client.MainWindow"
+<Window x:Class="SeaBattle.Client.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:SeaBattle.Client"
@@ -58,14 +58,6 @@
                 <TextBox x:Name="ServerAddressTextBox" 
                         Text="127.0.0.1" 
                         Width="200" 
-                        Margin="0,0,0,15"
-                        Background="#2D2D30"
-                        Foreground="White"/>
-
-                <TextBlock Text="Порт:" Foreground="White" Margin="0,0,0,5"/>
-                <TextBox x:Name="PortTextBox" 
-                        Text="8888" 
-                        Width="100" 
                         Margin="0,0,0,30"
                         Background="#2D2D30"
                         Foreground="White"/>

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -44,8 +44,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Models\GameModels.cs" />
+    <Compile Include="Models\AttackData.cs" />
+    <Compile Include="Models\AttackResult.cs" />
+    <Compile Include="Models\CellState.cs" />
+    <Compile Include="Models\GameBoard.cs" />
+    <Compile Include="Models\GameState.cs" />
     <Compile Include="Models\NetworkMessage.cs" />
+    <Compile Include="Models\PlaceShipsData.cs" />
+    <Compile Include="Models\Ship.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
