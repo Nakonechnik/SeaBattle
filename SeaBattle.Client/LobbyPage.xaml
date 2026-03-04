@@ -191,13 +191,6 @@
                            Height="35"
                            Margin="0,0,0,10"/>
 
-                    <Button x:Name="DiagnosticButton" 
-                           Content="Диагностика" 
-                           Click="DiagnosticButton_Click"
-                           Height="35"
-                           Margin="0,0,0,10"
-                           Background="#3498DB"/>
-                    
                     <Border Background="#3D3D40" 
                            CornerRadius="3" 
                            Padding="10"

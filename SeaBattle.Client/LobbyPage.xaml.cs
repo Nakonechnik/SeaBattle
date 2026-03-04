@@ -438,19 +438,7 @@ namespace SeaBattle.Client
 
                 MyRoomsListBox.SelectedItem = null;
             }
-        }
-
-        private void DiagnosticButton_Click(object sender, RoutedEventArgs e)
-        {
-            string info = $"ID: {App.PlayerId}\n" +
-                         $"Комнат моих: {_myRooms.Count}\n" +
-                         $"Доступно: {_availableRooms.Count}\n" +
-                         $"Connected: {App.TcpClient?.Connected}\n" +
-                         $"CurrentRoom: {_currentRoomId ?? "none"}\n" +
-                         $"CreateBtn: {CreateRoomButton.IsEnabled}\n" +
-                         $"DeleteBtn: {DeleteRoomButton.IsEnabled}";
-            MessageBox.Show(info, "Диагностика");
-        }
+        }  
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
