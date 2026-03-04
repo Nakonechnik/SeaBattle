@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -184,10 +185,32 @@ namespace SeaBattle.Client
 
         private void ExitButton_Click(object sender, RoutedEventArgs e)
         {
+            this.Close();
+        }
+
+        private async void MainWindow_Closing(object sender, CancelEventArgs e)
+        {
+            if (Content is GamePage gamePage)
+            {
+                try
+                {
+                    var leaveMessage = new NetworkMessage
+                    {
+                        Type = MessageType.LeaveRoom,
+                        SenderId = App.PlayerId
+                    };
+
+                    await SendMessageAsync(leaveMessage);
+                }
+                catch
+                {
+
+                }
+            }
+
             App.Cts.Cancel();
             App.Stream?.Close();
             App.TcpClient?.Close();
-            Application.Current.Shutdown();
         }
     }
 }

@@ -52,7 +52,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка отправки: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка отправки: {ex.Message}", "Ошибка",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

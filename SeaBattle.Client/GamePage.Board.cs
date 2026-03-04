@@ -14,7 +14,7 @@ namespace SeaBattle.Client
         {
             if (_gameStarted)
             {
-                MessageBox.Show("Игра уже началась, расстановка невозможна!", "Информация",
+                MessageBox.Show(Window.GetWindow(this), "Игра уже началась, расстановка невозможна!", "Информация",
                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -22,7 +22,7 @@ namespace SeaBattle.Client
             var shipToPlace = _myBoard.Ships.FirstOrDefault(s => !s.IsPlaced);
             if (shipToPlace == null)
             {
-                MessageBox.Show("Все корабли уже размещены!", "Информация",
+                MessageBox.Show(Window.GetWindow(this), "Все корабли уже размещены!", "Информация",
                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -36,7 +36,7 @@ namespace SeaBattle.Client
             }
             else
             {
-                MessageBox.Show(
+                MessageBox.Show(Window.GetWindow(this),
                     "Корабль выходит за границы поля или пересекается с другими кораблями.",
                     "Ошибка",
                     MessageBoxButton.OK,
@@ -48,21 +48,21 @@ namespace SeaBattle.Client
         {
             if (!_gameStarted)
             {
-                MessageBox.Show("Игра еще не началась!", "Информация",
+                MessageBox.Show(Window.GetWindow(this), "Игра еще не началась!", "Информация",
                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             if (!_isMyTurn)
             {
-                MessageBox.Show("Сейчас не ваш ход!", "Информация",
+                MessageBox.Show(Window.GetWindow(this), "Сейчас не ваш ход!", "Информация",
                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             if (_enemyBoard.VisibleCells[e.X, e.Y])
             {
-                MessageBox.Show("В эту клетку уже стреляли!", "Информация",
+                MessageBox.Show(Window.GetWindow(this), "В эту клетку уже стреляли!", "Информация",
                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -94,7 +94,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка отправки атаки: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка отправки атаки: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
                 IsEnemyBoardEnabled = true;
             }
@@ -168,8 +168,7 @@ namespace SeaBattle.Client
             if (!_myBoard.IsReady)
             {
                 int placed = _myBoard.Ships.Count(s => s.IsPlaced);
-                int total = _myBoard.Ships.Count;
-                MessageBox.Show($"Разместите все корабли! Размещено {placed} из {total}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Разместите все корабли! Размещено {placed} из {_totalShips}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -197,19 +196,19 @@ namespace SeaBattle.Client
                 StatusText.Foreground = Brushes.Orange;
                 GamePhaseText.Text = "Ожидание противника";
 
-                MessageBox.Show("Вы готовы к игре. Ожидайте готовности противника.",
+                MessageBox.Show(Window.GetWindow(this), "Вы готовы к игре. Ожидайте готовности противника.",
                               "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка отправки готовности: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка отправки готовности: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private async void SurrenderButton_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show("Вы действительно хотите сдаться?", "Подтверждение",
+            var result = MessageBox.Show(Window.GetWindow(this), "Вы действительно хотите сдаться?", "Подтверждение",
                                         MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (result == MessageBoxResult.Yes)
             {
@@ -230,14 +229,14 @@ namespace SeaBattle.Client
 
                     await SendMessageAsync(surrenderMessage);
 
-                    MessageBox.Show("Вы сдались. Игра окончена.", "Информация",
+                    MessageBox.Show(Window.GetWindow(this), "Вы сдались. Игра окончена.", "Информация",
                                   MessageBoxButton.OK, MessageBoxImage.Information);
 
                     ReturnToLobby();
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Ошибка: {ex.Message}", "Ошибка",
+                    MessageBox.Show(Window.GetWindow(this), $"Ошибка: {ex.Message}", "Ошибка",
                                   MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
@@ -252,7 +251,7 @@ namespace SeaBattle.Client
         {
             if (_gameOverHandled)
                 return;
-            var result = MessageBox.Show("Вы действительно хотите выйти из игры?", "Подтверждение",
+            var result = MessageBox.Show(Window.GetWindow(this), "Вы действительно хотите выйти из игры?", "Подтверждение",
                                         MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (result == MessageBoxResult.Yes)
             {
@@ -265,6 +264,7 @@ namespace SeaBattle.Client
                     };
 
                     await SendMessageAsync(leaveMessage);
+                    _leaveSent = true;
                 }
                 catch { }
 

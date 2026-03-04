@@ -25,6 +25,8 @@ namespace SeaBattle.Client
         private DispatcherTimer _turnTimer;
         private int _secondsLeft;
         private bool _isReconnect;
+        private readonly int _totalShips;
+        private bool _leaveSent;
 
         public GamePage(string roomId, bool isReconnect = false)
         {
@@ -33,6 +35,7 @@ namespace SeaBattle.Client
             _isReconnect = isReconnect;
             _myBoard = new GameBoard();
             _enemyBoard = new GameBoard();
+            _totalShips = _myBoard.Ships.Count;
             _gameStarted = false;
             _isMyTurn = false;
 
@@ -84,7 +87,7 @@ namespace SeaBattle.Client
                         break;
 
                     case MessageType.Error:
-                        MessageBox.Show($"Ошибка: {message.Data?["Message"]}", "Ошибка",
+                        MessageBox.Show(Window.GetWindow(this), $"Ошибка: {message.Data?["Message"]}", "Ошибка",
                                       MessageBoxButton.OK, MessageBoxImage.Error);
                         if (_gameStarted && _isMyTurn)
                             IsEnemyBoardEnabled = true;
@@ -109,7 +112,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка обработки сообщения: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -136,9 +139,9 @@ namespace SeaBattle.Client
 
         private void UpdateShipsStatus()
         {
+            // Во время расстановки показываем, сколько кораблей уже размещено
             int placed = _myBoard.Ships.Count(s => s.IsPlaced);
-            int total = _myBoard.Ships.Count;
-            ShipsStatusText.Text = $"{placed}/{total} размещено";
+            ShipsStatusText.Text = $"{placed}/{_totalShips} размещено";
 
             if (_myBoard.IsReady)
             {
@@ -152,6 +155,24 @@ namespace SeaBattle.Client
                 StatusText.Text = "Расстановка кораблей";
                 StatusText.Foreground = Brushes.Yellow;
             }
+        }
+
+        private void UpdateShipsBattleStatus()
+        {
+            // В бою показываем, сколько наших кораблей осталось целыми.
+            // Считаем уничтоженными те корабли, у которых все клетки на нашей доске помечены Destroyed.
+            int destroyed = 0;
+            foreach (var ship in _myBoard.Ships)
+            {
+                if (ship.Cells != null && ship.Cells.Count > 0 &&
+                    ship.Cells.All(c => _myBoard.Cells[c.X, c.Y] == CellState.Destroyed))
+                {
+                    destroyed++;
+                }
+            }
+
+            int alive = _totalShips - destroyed;
+            ShipsStatusText.Text = $"Ваши корабли: {alive}/{_totalShips}";
         }
 
         private void UpdateUIState()
@@ -173,8 +194,26 @@ namespace SeaBattle.Client
             }
         }
 
-        private void Page_Unloaded(object sender, RoutedEventArgs e)
+        private async void Page_Unloaded(object sender, RoutedEventArgs e)
         {
+            if (_gameStarted && !_gameOverHandled && !_leaveSent)
+            {
+                try
+                {
+                    var leaveMessage = new NetworkMessage
+                    {
+                        Type = MessageType.LeaveRoom,
+                        SenderId = App.PlayerId
+                    };
+
+                    await SendMessageAsync(leaveMessage);
+                    _leaveSent = true;
+                }
+                catch
+                {
+
+                }
+            }
         }
 
         public bool IsEnemyBoardEnabled

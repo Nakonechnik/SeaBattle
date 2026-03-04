@@ -6,7 +6,8 @@
         Height="800" 
         Width="1050"
         WindowStartupLocation="CenterScreen"
-        Background="#1E1E1E">
+        Background="#1E1E1E"
+        Closing="MainWindow_Closing">
 
     <Grid>
         <Grid.RowDefinitions>

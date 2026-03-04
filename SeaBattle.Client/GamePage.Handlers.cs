@@ -73,7 +73,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки состояния игры: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка обработки состояния игры: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -160,6 +160,9 @@ namespace SeaBattle.Client
 
                     MyBoardControl.UpdateBoard();
 
+                    // После выстрела по нашим кораблям пересчитываем оставшиеся корабли
+                    UpdateShipsBattleStatus();
+
                     TurnStatusText.Text = result.IsHit
                         ? (result.IsDestroyed ? "Противник уничтожил ваш корабль!" : "Противник попал!")
                         : "Противник промахнулся.";
@@ -171,7 +174,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки результата атаки: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка обработки результата атаки: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -199,7 +202,7 @@ namespace SeaBattle.Client
             string msg = messageForBox ?? (isWinner
                 ? "Поздравляем! Вы победили! Все корабли противника уничтожены!"
                 : "Вы проиграли. Все ваши корабли уничтожены.");
-            MessageBox.Show(msg, "Игра окончена",
+            MessageBox.Show(Window.GetWindow(this), msg, "Игра окончена",
                 MessageBoxButton.OK, isWinner ? MessageBoxImage.Information : MessageBoxImage.Exclamation);
 
             Task.Run(async () =>
@@ -237,7 +240,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки смены хода: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка обработки смены хода: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -263,7 +266,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка обработки конца игры: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка обработки конца игры: {ex.Message}", "Ошибка",
                               MessageBoxButton.OK, MessageBoxImage.Error);
                 ReturnToLobby();
             }
@@ -274,7 +277,7 @@ namespace SeaBattle.Client
             ExitGameButton.IsEnabled = false;
             StopTurnTimer();
             string playerName = message.Data?["PlayerName"]?.ToString() ?? "Противник";
-            MessageBox.Show($"{playerName} покинул игру!", "Информация",
+            MessageBox.Show(Window.GetWindow(this), $"{playerName} покинул игру!", "Информация",
                           MessageBoxButton.OK, MessageBoxImage.Information);
 
             ReturnToLobby();
@@ -288,6 +291,13 @@ namespace SeaBattle.Client
                 StatusText.Text = $"{playerName} отключился";
                 StatusText.Foreground = Brushes.Orange;
                 TurnStatusText.Text = "Противник может переподключиться до конца своего следующего хода. Ожидайте.";
+
+                MessageBox.Show(
+                    Window.GetWindow(this),
+                    $"{playerName} отключился. Он может переподключиться до конца своего следующего хода.",
+                    "Противник отключился",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
             });
         }
 
@@ -316,7 +326,7 @@ namespace SeaBattle.Client
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка переподключения: {ex.Message}", "Ошибка",
+                MessageBox.Show(Window.GetWindow(this), $"Ошибка переподключения: {ex.Message}", "Ошибка",
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 ReturnToLobby();
             }
